@@ -1,0 +1,32 @@
+# Compiled binaries
+gometro
+minimetro-go
+minimetro-go-bin
+*.exe
+*.out
+
+# Build artifacts
+/tmp_out
+/dist/
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Test cache and coverage
+*.test
+*.prof
+coverage.out
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code local settings
+.claude/
