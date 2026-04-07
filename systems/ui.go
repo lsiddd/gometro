@@ -98,6 +98,9 @@ func (ui *UI) Draw(screen *ebiten.Image, gs *state.GameState, ih *InputHandler) 
 		ui.drawGameOver(screen, gs)
 	} else {
 		ui.drawGameUI(screen, gs, ih)
+		if ui.ShowUpgradeModal {
+			ui.drawUpgradeModal(screen, gs)
+		}
 	}
 }
 
@@ -133,8 +136,20 @@ func (ui *UI) Update(gs *state.GameState, ih *InputHandler, game *Game) {
 			}
 		}
 	} else if ui.ShowUpgradeModal {
-		gs.Paused = false
-		ui.ShowUpgradeModal = false
+		if ih.LeftJustPressed && len(ui.UpgradeChoices) >= 2 {
+			x1, y1, x2, y2, cw, ch := ui.upgradeCardRects()
+			if pointInRect(ih.MousePos, x1, y1, cw, ch) {
+				log.Printf("[UI] Upgrade chosen: %s", ui.UpgradeChoices[0])
+				applyUpgrade(gs, ui.UpgradeChoices[0])
+				gs.Paused = false
+				ui.ShowUpgradeModal = false
+			} else if pointInRect(ih.MousePos, x2, y2, cw, ch) {
+				log.Printf("[UI] Upgrade chosen: %s", ui.UpgradeChoices[1])
+				applyUpgrade(gs, ui.UpgradeChoices[1])
+				gs.Paused = false
+				ui.ShowUpgradeModal = false
+			}
+		}
 	} else {
 		if ih.LeftJustPressed {
 			if pointInRect(ih.MousePos, ui.Width-140, 8, 60, 30) {
@@ -278,6 +293,117 @@ func (ui *UI) drawGameUI(screen *ebiten.Image, gs *state.GameState, ih *InputHan
 		} else {
 			vector.StrokeLine(screen, float32(p.Start.X), float32(p.Start.Y), float32(p.End.X), float32(p.End.Y), 6, clr, true)
 		}
+	}
+}
+
+// ── Weekly upgrade modal ──────────────────────────────────────────────────────
+
+type upgradeInfo struct {
+	title string
+	desc  string
+	clr   color.RGBA
+}
+
+func getUpgradeInfo(key string) upgradeInfo {
+	switch key {
+	case UpgradeNewLine:
+		return upgradeInfo{"New Line", "Open a new metro route", color.RGBA{74, 140, 186, 255}}
+	case UpgradeCarriage:
+		return upgradeInfo{"Carriage", "Add a carriage to a train\n(doubles capacity: 6 → 12)", color.RGBA{90, 169, 107, 255}}
+	case UpgradeBridge:
+		return upgradeInfo{"Tunnel ×2", "Cross a body of water twice", color.RGBA{58, 189, 176, 255}}
+	case UpgradeInterchange:
+		return upgradeInfo{"Interchange", "Triple a station's capacity\nand speed up boarding", color.RGBA{155, 111, 186, 255}}
+	}
+	return upgradeInfo{key, "", clrInk}
+}
+
+// upgradeCardRects returns (x1, y1, x2, y2, cardW, cardH) for the two choice cards.
+func (ui *UI) upgradeCardRects() (float64, float64, float64, float64, float64, float64) {
+	cx, cy := ui.Width/2, ui.Height/2
+	modW := 580.0
+	modX := cx - modW/2
+	modY := cy - 175.0
+	cardW, cardH := 260.0, 190.0
+	return modX + 20, modY + 115, modX + 300, modY + 115, cardW, cardH
+}
+
+func applyUpgrade(gs *state.GameState, choice string) {
+	switch choice {
+	case UpgradeNewLine:
+		if gs.AvailableLines < gs.MaxLines {
+			gs.AvailableLines++
+		}
+	case UpgradeCarriage:
+		gs.Carriages++
+	case UpgradeBridge:
+		gs.Bridges += 2
+	case UpgradeInterchange:
+		gs.Interchanges++
+	}
+}
+
+// ApplyUpgrade is the exported version for use by the Solver.
+func ApplyUpgrade(gs *state.GameState, choice string) { applyUpgrade(gs, choice) }
+
+func (ui *UI) drawUpgradeModal(screen *ebiten.Image, gs *state.GameState) {
+	if len(ui.UpgradeChoices) < 2 {
+		return
+	}
+
+	// Dark overlay over the paused game
+	vector.FillRect(screen, 0, 0, float32(ui.Width), float32(ui.Height), color.RGBA{0, 0, 0, 160}, true)
+
+	cx, cy := ui.Width/2, ui.Height/2
+	modW, modH := 580.0, 350.0
+	modX, modY := cx-modW/2, cy-modH/2
+
+	// Modal background
+	vector.FillRect(screen, float32(modX), float32(modY), float32(modW), float32(modH), clrBg, true)
+
+	// Header
+	drawText(screen, fmt.Sprintf("Week %d Complete", gs.Week), 22, modX+20, modY+18, clrInk)
+	drawText(screen, "+ 1 Locomotive awarded", 13, modX+20, modY+50, color.RGBA{80, 160, 90, 255})
+	drawText(screen, "Choose one upgrade:", 13, modX+20, modY+80, color.RGBA{120, 118, 112, 255})
+
+	x1, y1, x2, y2, cardW, cardH := ui.upgradeCardRects()
+
+	for i, choice := range ui.UpgradeChoices[:2] {
+		cardX := x1
+		cardY := y1
+		if i == 1 {
+			cardX = x2
+			cardY = y2
+		}
+
+		info := getUpgradeInfo(choice)
+
+		// Card background
+		vector.FillRect(screen, float32(cardX), float32(cardY), float32(cardW), float32(cardH), color.RGBA{232, 230, 222, 255}, true)
+
+		// Colored top band
+		vector.FillRect(screen, float32(cardX), float32(cardY), float32(cardW), 8, info.clr, true)
+
+		// Colored dot
+		vector.FillCircle(screen, float32(cardX)+28, float32(cardY)+46, 18, info.clr, true)
+
+		// Title
+		drawText(screen, info.title, 17, cardX+56, cardY+34, clrInk)
+
+		// Description (split on \n manually)
+		desc := info.desc
+		lineY := cardY + 82.0
+		start := 0
+		for j := 0; j <= len(desc); j++ {
+			if j == len(desc) || desc[j] == '\n' {
+				drawText(screen, desc[start:j], 12, cardX+16, lineY, color.RGBA{100, 100, 100, 255})
+				lineY += 18
+				start = j + 1
+			}
+		}
+
+		// "Click to select" hint at card bottom
+		drawText(screen, "click to select", 11, cardX+cardW/2-38, cardY+cardH-22, color.RGBA{160, 158, 152, 255})
 	}
 }
 

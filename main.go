@@ -62,8 +62,14 @@ func (m *MinimetroGame) Update() error {
 		result := m.GameSystem.Update(m.GameState, effectiveDelta, m.UI.Width, m.UI.Height, m.GameState.SimTimeMs)
 		if result == "show_upgrades" {
 			log.Printf("[Game] Week %d complete — showing upgrade modal", m.GameState.Week)
-			m.UI.ShowUpgradeModal = true
-			m.GameState.Paused = true
+			m.UI.UpgradeChoices = m.GameSystem.GenerateUpgradeChoices(m.GameState)
+			if m.Solver.Enabled {
+				chosen := m.Solver.ChooseUpgrade(m.GameState, m.UI.UpgradeChoices)
+				systems.ApplyUpgrade(m.GameState, chosen)
+			} else {
+				m.UI.ShowUpgradeModal = true
+				m.GameState.Paused = true
+			}
 		} else if result == "game_over" {
 			log.Printf("[Game] GAME OVER — score=%d passengers=%d", m.GameState.Score, m.GameState.PassengersDelivered)
 			m.UI.ShowGameOverModal = true

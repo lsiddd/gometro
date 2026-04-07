@@ -47,11 +47,102 @@ func (s *Solver) Update(gs *state.GameState, _ *GraphManager, nowMs float64) {
 	if !s.Enabled || gs.Paused || gs.GameOver {
 		return
 	}
-	if nowMs-s.lastRunMs < s.runInterval {
+	// Respond faster when stations are near overcrowding.
+	interval := s.runInterval
+	if len(s.stationsAbove(gs, config.OvercrowdCriticalThreshold)) > 0 {
+		interval = 80.0
+	} else if len(s.stationsAbove(gs, 0.6)) > 0 {
+		interval = 150.0
+	}
+	if nowMs-s.lastRunMs < interval {
 		return
 	}
 	s.lastRunMs = nowMs
 	s.tick(gs, nowMs)
+}
+
+// ChooseUpgrade picks the most beneficial upgrade for the current game state.
+func (s *Solver) ChooseUpgrade(gs *state.GameState, choices []string) string {
+	if len(choices) == 0 {
+		return ""
+	}
+	best, bestScore := choices[0], math.Inf(-1)
+	for _, c := range choices {
+		sc := s.scoreUpgrade(gs, c)
+		if sc > bestScore {
+			bestScore = sc
+			best = c
+		}
+	}
+	log.Printf("[Solver] Upgrade chosen: %s (score=%.1f)", best, bestScore)
+	return best
+}
+
+func (s *Solver) scoreUpgrade(gs *state.GameState, upgrade string) float64 {
+	switch upgrade {
+	case UpgradeNewLine:
+		if gs.AvailableLines >= gs.MaxLines {
+			return -1000
+		}
+		isolated := s.isolatedStations(gs)
+		score := float64(len(isolated)) * 25
+		for _, st := range gs.Stations {
+			score += st.OvercrowdProgress * 0.04
+		}
+		return score
+
+	case UpgradeCarriage:
+		score := 0.0
+		for _, t := range gs.Trains {
+			if t.Line == nil || !t.Line.Active || t.Line.MarkedForDeletion {
+				continue
+			}
+			cap := t.TotalCapacity()
+			if cap == 0 {
+				continue
+			}
+			ratio := float64(len(t.Passengers)) / float64(cap)
+			if ratio > 0.5 {
+				score += ratio * 20
+			}
+		}
+		for _, st := range gs.Stations {
+			score += st.OvercrowdProgress * 0.03
+		}
+		return score
+
+	case UpgradeBridge:
+		if gs.Bridges == 0 {
+			return 60
+		}
+		if gs.Bridges == 1 {
+			return 35
+		}
+		// Extra value if isolated stations can only be reached via river crossings.
+		isolated := s.isolatedStations(gs)
+		for _, st := range isolated {
+			for _, other := range gs.Stations {
+				if other != st && s.riverCost(gs, st, other) > 0 {
+					return 40
+				}
+			}
+		}
+		return 15
+
+	case UpgradeInterchange:
+		score := float64(gs.Week) * 2
+		for _, st := range gs.Stations {
+			if st.IsInterchange {
+				continue
+			}
+			lines := s.linesThroughStation(gs, st)
+			if len(lines) >= 2 {
+				score += float64(len(lines))*8 + st.OvercrowdProgress*0.1
+			}
+		}
+		return score
+	}
+	return 0
 }
 
 // tick executes at most one action, in strict priority order.
@@ -268,6 +359,11 @@ func (s *Solver) tryConnectIsolated(gs *state.GameState, station *components.Sta
 // line for station. Prefers a different type, prefers proximity, excludes stations
 // that would require more bridges than available.
 func (s *Solver) bestPartnerForNewLine(gs *state.GameState, station *components.Station) *components.Station {
+	isolatedSet := make(map[*components.Station]bool)
+	for _, st := range s.isolatedStations(gs) {
+		isolatedSet[st] = true
+	}
+
 	var best *components.Station
 	bestScore := -math.MaxFloat64
 	for _, candidate := range gs.Stations {
@@ -279,11 +375,16 @@ func (s *Solver) bestPartnerForNewLine(gs *state.GameState, station *components.
 			continue
 		}
 		dist := math.Hypot(candidate.X-station.X, candidate.Y-station.Y)
-		typeDiff := 0.0
+		score := -dist * 0.05
 		if candidate.Type != station.Type {
-			typeDiff = 30.0
+			score += 30.0
 		}
-		score := typeDiff - dist*0.05
+		// Extra value for connecting two isolated stations simultaneously.
+		if isolatedSet[candidate] {
+			score += 20.0
+		}
+		// Prefer candidates with more waiting passengers (higher demand).
+		score += float64(len(candidate.Passengers)) * 2
 		if score > bestScore {
 			bestScore = score
 			best = candidate
@@ -529,9 +630,12 @@ func (s *Solver) bestLineForStation(gs *state.GameState, station *components.Sta
 				continue
 			}
 			hs := s.hygieneScore(line, station, insertIdx)
-			// Subtract distance penalty so closer stations are preferred when scores tie.
 			dist := math.Hypot(station.X-neighbor.X, station.Y-neighbor.Y)
-			score := hs - dist*0.01
+			// Bonus when the line already serves destinations that passengers at station need.
+			demand := s.demandMatchScore(line, station)
+			// Weight station urgency so crowded stations get connected first.
+			urgency := station.OvercrowdProgress * 0.02
+			score := hs + demand - dist*0.01 + urgency
 			candidates = append(candidates, candidate{line, insertIdx, score})
 		}
 	}
@@ -682,5 +786,21 @@ func (s *Solver) riverCost(gs *state.GameState, s1, s2 *components.Station) int 
 		return 1
 	}
 	return 0
+}
+
+// demandMatchScore rewards connecting a station to a line that already serves
+// the destination types that passengers at the station are waiting for.
+func (s *Solver) demandMatchScore(line *components.Line, station *components.Station) float64 {
+	covered := make(map[config.StationType]bool)
+	for _, st := range line.Stations {
+		covered[st.Type] = true
+	}
+	score := 0.0
+	for _, p := range station.Passengers {
+		if covered[p.Destination] {
+			score += 5
+		}
+	}
+	return score
 }
 
