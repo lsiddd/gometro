@@ -1,10 +1,10 @@
 package components
 
-type TrainState string
+type TrainState int
 
 const (
-	TrainWaiting TrainState = "WAITING"
-	TrainMoving  TrainState = "MOVING"
+	TrainWaiting TrainState = iota
+	TrainMoving
 )
 
 type Train struct {
@@ -25,7 +25,6 @@ type Train struct {
 	PathPts             [][2]float64
 	PathLength          float64
 	CarriageCount       int
-	IsLoop              bool
 	ReservedSeats       int
 }
 
@@ -46,16 +45,17 @@ func NewTrain(id int, line *Line, capacity int, maxSpeed float64) *Train {
 		t.X = line.Stations[0].X
 		t.Y = line.Stations[0].Y
 	}
-	t.CheckLoopStatus()
 	return t
 }
 
-func (t *Train) CheckLoopStatus() {
+// IsLoop reports whether the train's line forms a closed loop. It reads the
+// current line topology on every call, so it is always accurate even after
+// stations are added or removed without an explicit revalidation step.
+func (t *Train) IsLoop() bool {
 	if len(t.Line.Stations) >= 3 {
-		t.IsLoop = t.Line.Stations[0] == t.Line.Stations[len(t.Line.Stations)-1]
-	} else {
-		t.IsLoop = false
+		return t.Line.Stations[0] == t.Line.Stations[len(t.Line.Stations)-1]
 	}
+	return false
 }
 
 func (t *Train) HasCarriage() bool {
@@ -70,7 +70,8 @@ func (t *Train) GetUpcomingStops(currentStation *Station, singleDirectionOnly bo
 	upcoming := make(map[*Station]bool)
 	lineStations := t.Line.Stations
 	numStations := len(lineStations)
-	if t.IsLoop {
+	isLoop := t.IsLoop()
+	if isLoop {
 		numStations--
 	}
 
@@ -81,7 +82,7 @@ func (t *Train) GetUpcomingStops(currentStation *Station, singleDirectionOnly bo
 	currentIndex := t.CurrentStationIndex
 
 	currentDirection := t.Direction
-	if !t.IsLoop {
+	if !isLoop {
 		if currentIndex == 0 {
 			currentDirection = 1
 		}
@@ -90,7 +91,7 @@ func (t *Train) GetUpcomingStops(currentStation *Station, singleDirectionOnly bo
 		}
 	}
 
-	if t.IsLoop {
+	if isLoop {
 		for i := 1; i < numStations; i++ {
 			index := (currentIndex + i) % numStations
 			upcoming[lineStations[index]] = true

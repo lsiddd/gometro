@@ -7,7 +7,6 @@ import (
 	"minimetro-go/components"
 	"minimetro-go/config"
 	"minimetro-go/state"
-	"slices"
 )
 
 type Game struct {
@@ -89,8 +88,7 @@ func (g *Game) createInitialStations(gs *state.GameState, width, height float64)
 			}
 
 			if !tooClose && !inRiver {
-				gs.Stations = append(gs.Stations, components.NewStation(gs.StationIDCounter, x, y, stationType))
-				gs.StationIDCounter++
+				gs.AddStation(components.NewStation(gs.StationIDCounter, x, y, stationType))
 				break
 			}
 
@@ -114,8 +112,7 @@ func (g *Game) createInitialStations(gs *state.GameState, width, height float64)
 				}
 				if !tooClose {
 					log.Printf("[Game] Initial station fallback placement: type=%s pos=(%.0f,%.0f)", stationType, x, y)
-					gs.Stations = append(gs.Stations, components.NewStation(gs.StationIDCounter, x, y, stationType))
-					gs.StationIDCounter++
+					gs.AddStation(components.NewStation(gs.StationIDCounter, x, y, stationType))
 					break
 				}
 			}
@@ -296,8 +293,6 @@ func (g *Game) UpdateTrain(t *components.Train, gs *state.GameState, deltaTime, 
 		return
 	}
 
-	t.CheckLoopStatus()
-
 	if t.CurrentStationIndex >= len(t.Line.Stations) {
 		t.CurrentStationIndex = len(t.Line.Stations) - 1
 		t.Progress = 0
@@ -362,17 +357,12 @@ func (g *Game) UpdateTrain(t *components.Train, gs *state.GameState, deltaTime, 
 			for _, p := range alighted {
 				if p.OnTrain == t {
 					p.OnTrain = nil
-					if i := slices.Index(gs.Passengers, p); i >= 0 {
-						gs.Passengers = slices.Delete(gs.Passengers, i, i+1)
-					}
+					gs.RemovePassenger(p)
 				}
 			}
 			t.Passengers = nil
 
-			// remove train
-			if i := slices.Index(gs.Trains, t); i >= 0 {
-				gs.Trains = slices.Delete(gs.Trains, i, i+1)
-			}
+			gs.RemoveTrain(t)
 			return
 		}
 
@@ -400,7 +390,7 @@ func (g *Game) DetermineNextStation(t *components.Train) {
 		t.CurrentStationIndex = 0
 	}
 
-	if t.IsLoop {
+	if t.IsLoop() {
 		t.NextStationIndex = (t.CurrentStationIndex + 1) % (len(t.Line.Stations) - 1)
 	} else {
 		if t.CurrentStationIndex >= len(t.Line.Stations)-1 {
@@ -473,9 +463,7 @@ func (g *Game) processPassengers(t *components.Train, station *components.Statio
 	for _, p := range alighted {
 		if p.OnTrain == t {
 			p.OnTrain = nil
-			if i := slices.Index(gs.Passengers, p); i >= 0 {
-				gs.Passengers = slices.Delete(gs.Passengers, i, i+1)
-			}
+			gs.RemovePassenger(p)
 		}
 	}
 
@@ -622,7 +610,7 @@ func (g *Game) SpawnPassenger(gs *state.GameState, nowMs float64) {
 		passenger.Path = FindPath(g.GraphManager, gs, station, dest)
 		passenger.PathIndex = 1
 		station.AddPassenger(passenger, nowMs)
-		gs.Passengers = append(gs.Passengers, passenger)
+		gs.AddPassenger(passenger)
 	}
 }
 
@@ -683,9 +671,8 @@ func (g *Game) SpawnStation(gs *state.GameState, screenWidth, screenHeight float
 
 		if !tooClose && !inRiver {
 			st := components.NewStation(gs.StationIDCounter, x, y, stationType)
-			gs.Stations = append(gs.Stations, st)
-			log.Printf("[Game] Station spawned: id=%d type=%s pos=(%.0f,%.0f) total=%d", gs.StationIDCounter, stationType, x, y, len(gs.Stations))
-			gs.StationIDCounter++
+			gs.AddStation(st)
+			log.Printf("[Game] Station spawned: id=%d type=%s pos=(%.0f,%.0f) total=%d", st.ID, stationType, x, y, len(gs.Stations))
 			return
 		}
 	}

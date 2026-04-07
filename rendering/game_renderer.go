@@ -83,6 +83,19 @@ func (gr *GameRenderer) drawRiver(screen *ebiten.Image, river *components.River)
 	fillPolygon(screen, pts, color.RGBA{176, 196, 214, 200})
 }
 
+// animProgress returns the animation's normalised progress [0,1] at nowMs,
+// or -1 if the animation is nil or has already expired.
+func animProgress(anim *components.Animation, nowMs float64) float64 {
+	if anim == nil {
+		return -1
+	}
+	elapsed := nowMs - anim.StartTime
+	if elapsed < 0 || elapsed >= anim.Duration {
+		return -1
+	}
+	return elapsed / anim.Duration
+}
+
 func toRGBA(c [3]int, alpha uint8) color.RGBA {
 	return color.RGBA{uint8(c[0]), uint8(c[1]), uint8(c[2]), alpha}
 }
@@ -217,6 +230,12 @@ func (gr *GameRenderer) drawStation(screen *ebiten.Image, station *components.St
 
 	if station.IsInterchange {
 		vector.StrokeCircle(screen, x, y, radius+8, 5, borderClr, true)
+	}
+
+	// Delivery flash: fades from opaque to transparent over the animation duration.
+	if p := animProgress(station.DeliveryAnimation, nowMs); p >= 0 {
+		alpha := uint8((1.0 - p) * 220)
+		vector.FillCircle(screen, x, y, radius*2.5, color.RGBA{255, 220, 50, alpha}, true)
 	}
 
 	// Passengers inside station

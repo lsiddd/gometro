@@ -94,7 +94,7 @@ func main() {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 
 	ih := systems.NewInputHandler()
-	solver := systems.NewSolver(ih)
+	solver := systems.NewSolver()
 	ui := systems.NewUI()
 	ui.Solver = solver
 

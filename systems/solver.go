@@ -35,7 +35,7 @@ type Solver struct {
 	ghost       ghostLineState
 }
 
-func NewSolver(ih *InputHandler) *Solver {
+func NewSolver() *Solver {
 	return &Solver{
 		Enabled:     false,
 		runInterval: 300.0,
@@ -178,8 +178,7 @@ func (s *Solver) tryGhostLine(gs *state.GameState, target *components.Station, n
 
 	cityCfg := config.Cities[gs.SelectedCity]
 	train := components.NewTrain(gs.TrainIDCounter, spareLine, cityCfg.TrainCapacity, config.TrainMaxSpeed)
-	gs.TrainIDCounter++
-	gs.Trains = append(gs.Trains, train)
+	gs.AddTrain(train)
 	spareLine.Trains = append(spareLine.Trains, train)
 	gs.AvailableTrains--
 
@@ -260,8 +259,7 @@ func (s *Solver) tryConnectIsolated(gs *state.GameState, station *components.Sta
 	gs.AvailableTrains--
 	cityCfg := config.Cities[gs.SelectedCity]
 	train := components.NewTrain(gs.TrainIDCounter, spare, cityCfg.TrainCapacity, config.TrainMaxSpeed)
-	gs.TrainIDCounter++
-	gs.Trains = append(gs.Trains, train)
+	gs.AddTrain(train)
 	spare.Trains = append(spare.Trains, train)
 	return true
 }
@@ -322,8 +320,7 @@ func (s *Solver) tryDeployTrain(gs *state.GameState) bool {
 	gs.AvailableTrains--
 	cityCfg := config.Cities[gs.SelectedCity]
 	train := components.NewTrain(gs.TrainIDCounter, bestLine, cityCfg.TrainCapacity, config.TrainMaxSpeed)
-	gs.TrainIDCounter++
-	gs.Trains = append(gs.Trains, train)
+	gs.AddTrain(train)
 	bestLine.Trains = append(bestLine.Trains, train)
 	return true
 }
@@ -354,8 +351,7 @@ func (s *Solver) tryAddTrainToLineThroughStation(gs *state.GameState, station *c
 	gs.AvailableTrains--
 	cityCfg := config.Cities[gs.SelectedCity]
 	train := components.NewTrain(gs.TrainIDCounter, bestLine, cityCfg.TrainCapacity, config.TrainMaxSpeed)
-	gs.TrainIDCounter++
-	gs.Trains = append(gs.Trains, train)
+	gs.AddTrain(train)
 	bestLine.Trains = append(bestLine.Trains, train)
 	return true
 }
@@ -613,8 +609,7 @@ func (s *Solver) attachStation(gs *state.GameState, line *components.Line, stati
 		gs.AvailableTrains--
 		cityCfg := config.Cities[gs.SelectedCity]
 		train := components.NewTrain(gs.TrainIDCounter, line, cityCfg.TrainCapacity, config.TrainMaxSpeed)
-		gs.TrainIDCounter++
-		gs.Trains = append(gs.Trains, train)
+		gs.AddTrain(train)
 		line.Trains = append(line.Trains, train)
 	}
 }

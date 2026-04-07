@@ -274,8 +274,7 @@ func (ih *InputHandler) handleMouseUp(gs *state.GameState, button int) bool {
 			gs.AvailableTrains--
 			cityCfg := config.Cities[gs.SelectedCity]
 			newTrain := components.NewTrain(gs.TrainIDCounter, targetLine, cityCfg.TrainCapacity, config.TrainMaxSpeed)
-			gs.TrainIDCounter++
-			gs.Trains = append(gs.Trains, newTrain)
+			gs.AddTrain(newTrain)
 			targetLine.Trains = append(targetLine.Trains, newTrain)
 		}
 		ih.Reset()
@@ -330,7 +329,7 @@ func (ih *InputHandler) handleMouseUp(gs *state.GameState, button int) bool {
 				ih.DraggedExistingTrain.X = targetLine.Stations[0].X
 				ih.DraggedExistingTrain.Y = targetLine.Stations[0].Y
 			}
-			ih.DraggedExistingTrain.CheckLoopStatus()
+			// IsLoop is now computed live from the line topology; no update needed.
 		}
 		ih.Reset()
 		return true
@@ -424,8 +423,7 @@ func (ih *InputHandler) handleMouseUp(gs *state.GameState, button int) bool {
 							gs.AvailableTrains--
 							cityCfg := config.Cities[gs.SelectedCity]
 							newTrain := components.NewTrain(gs.TrainIDCounter, line, cityCfg.TrainCapacity, config.TrainMaxSpeed)
-							gs.TrainIDCounter++
-							gs.Trains = append(gs.Trains, newTrain)
+							gs.AddTrain(newTrain)
 							line.Trains = append(line.Trains, newTrain)
 							log.Printf("[Input] Train %d auto-spawned on line %d", newTrain.ID, line.Index)
 						} else if len(line.Trains) == 0 {
@@ -520,87 +518,9 @@ func segmentsIntersect(x1, y1, x2, y2, x3, y3, x4, y4 float64) bool {
 }
 
 func (ih *InputHandler) removeEndStation(gs *state.GameState, line *components.Line, station *components.Station) {
-	if len(line.Stations) < 2 {
-		return
-	}
-	isLoop := len(line.Stations) > 2 && line.Stations[0] == line.Stations[len(line.Stations)-1]
-
-	idx := -1
-	for i, s := range line.Stations {
-		if s == station {
-			idx = i; break
-		}
-	}
-	if idx == -1 {
-		return
-	}
-	lastIdx := len(line.Stations) - 1
-
-	if isLoop {
-		if station == line.OriginalStart && (idx == 0 || idx == lastIdx) {
-			line.Stations = line.Stations[:lastIdx]
-			if len(line.Stations) > 0 { line.OriginalEnd = line.Stations[len(line.Stations)-1] }
-		} else if station == line.OriginalEnd {
-			line.Stations = line.Stations[:lastIdx]
-			// Reverse
-			for i, j := 0, len(line.Stations)-1; i < j; i, j = i+1, j-1 {
-				line.Stations[i], line.Stations[j] = line.Stations[j], line.Stations[i]
-			}
-			if len(line.Stations) > 0 {
-				line.OriginalStart = line.Stations[0]
-				line.OriginalEnd = line.Stations[len(line.Stations)-1]
-			}
-		}
-	} else {
-		if idx == 0 {
-			line.Stations = line.Stations[1:]
-			if len(line.Stations) > 0 { line.OriginalStart = line.Stations[0] }
-		} else if idx == lastIdx {
-			line.Stations = line.Stations[:lastIdx]
-			if len(line.Stations) > 0 { line.OriginalEnd = line.Stations[len(line.Stations)-1] }
-		}
-	}
-
-	if len(line.Stations) < 2 {
-		line.MarkedForDeletion = true
-	} else {
-		line.Active = true
-	}
-	gs.GraphDirty = true
+	line.RemoveEndStation(station, func() { gs.GraphDirty = true })
 }
 
 func (ih *InputHandler) removeStationFromLine(gs *state.GameState, line *components.Line, station *components.Station) {
-	var indices []int
-	for i, s := range line.Stations {
-		if s == station {
-			indices = append(indices, i)
-		}
-	}
-	if len(indices) == 0 {
-		return
-	}
-
-	isLoop := len(line.Stations) > 2 && line.Stations[0] == line.Stations[len(line.Stations)-1]
-	isEndpoint := !isLoop && (indices[0] == 0 || indices[0] == len(line.Stations)-1)
-
-	if isEndpoint {
-		ih.removeEndStation(gs, line, station)
-		return
-	}
-
-	if len(indices) > 1 {
-		line.Stations = line.Stations[:len(line.Stations)-1]
-		line.Stations = append(line.Stations[:indices[0]], line.Stations[indices[0]+1:]...)
-		if len(line.Stations) > 0 {
-			line.Stations = append(line.Stations, line.Stations[0])
-		}
-	} else {
-		line.Stations = append(line.Stations[:indices[0]], line.Stations[indices[0]+1:]...)
-	}
-
-	line.Active = len(line.Stations) >= 2
-	if !line.Active {
-		line.MarkedForDeletion = true
-	}
-	gs.GraphDirty = true
+	line.RemoveStation(station, func() { gs.GraphDirty = true })
 }

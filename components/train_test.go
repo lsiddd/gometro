@@ -65,7 +65,7 @@ func TestTrain_IsLoop_ThreeStationsClosedLoop(t *testing.T) {
 	line.AddStation(c, -1, nil)
 	line.AddStation(a, -1, nil) // close loop
 	tr := NewTrain(0, line, 6, 1.2)
-	if !tr.IsLoop {
+	if !tr.IsLoop() {
 		t.Error("closed 3-station line should be detected as loop")
 	}
 }
@@ -75,7 +75,7 @@ func TestTrain_IsLoop_TwoStations_NotLoop(t *testing.T) {
 	b := NewStation(1, 100, 0, "triangle")
 	line := makeSimpleLine(a, b)
 	tr := NewTrain(0, line, 6, 1.2)
-	if tr.IsLoop {
+	if tr.IsLoop() {
 		t.Error("two-station line cannot be a loop")
 	}
 }
@@ -86,7 +86,7 @@ func TestTrain_IsLoop_ThreeStations_Open(t *testing.T) {
 	c := NewStation(2, 200, 0, "square")
 	line := makeSimpleLine(a, b, c)
 	tr := NewTrain(0, line, 6, 1.2)
-	if tr.IsLoop {
+	if tr.IsLoop() {
 		t.Error("open three-station line must not be a loop")
 	}
 }
@@ -156,9 +156,8 @@ func TestTrain_CheckLoopStatus_UpdatesOnStationChange(t *testing.T) {
 	c := NewStation(2, 50, 100, "square")
 	line.AddStation(c, -1, nil)
 	line.AddStation(a, -1, nil)
-	tr.CheckLoopStatus()
 
-	if !tr.IsLoop {
-		t.Error("CheckLoopStatus should detect newly closed loop")
+	if !tr.IsLoop() {
+		t.Error("IsLoop() should detect newly closed loop without manual revalidation")
 	}
 }

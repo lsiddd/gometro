@@ -2,6 +2,7 @@ package state
 
 import (
 	"minimetro-go/components"
+	"slices"
 )
 
 type GameState struct {
@@ -36,6 +37,37 @@ type GameState struct {
 	CameraZoom            float64
 	SimTimeMs             float64
 	GraphDirty            bool
+}
+
+// AddStation appends station to the game and increments the ID counter.
+func (gs *GameState) AddStation(s *components.Station) {
+	gs.Stations = append(gs.Stations, s)
+	gs.StationIDCounter++
+}
+
+// AddTrain appends train to the global train list and increments the ID counter.
+func (gs *GameState) AddTrain(t *components.Train) {
+	gs.Trains = append(gs.Trains, t)
+	gs.TrainIDCounter++
+}
+
+// RemoveTrain removes train from the global train list. No-op if not present.
+func (gs *GameState) RemoveTrain(t *components.Train) {
+	if i := slices.Index(gs.Trains, t); i >= 0 {
+		gs.Trains = slices.Delete(gs.Trains, i, i+1)
+	}
+}
+
+// AddPassenger appends passenger to the global passenger list.
+func (gs *GameState) AddPassenger(p *components.Passenger) {
+	gs.Passengers = append(gs.Passengers, p)
+}
+
+// RemovePassenger removes passenger from the global passenger list. No-op if not present.
+func (gs *GameState) RemovePassenger(p *components.Passenger) {
+	if i := slices.Index(gs.Passengers, p); i >= 0 {
+		gs.Passengers = slices.Delete(gs.Passengers, i, i+1)
+	}
 }
 
 func NewGameState() *GameState {

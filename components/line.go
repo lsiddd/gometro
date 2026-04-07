@@ -96,6 +96,109 @@ func (l *Line) AddStation(station *Station, insertIndex int, markDirtyCallback f
 	return true
 }
 
+// RemoveEndStation removes station from an endpoint of the line. For loops it
+// handles de-closing by removing the repeated entry. Sets MarkedForDeletion when
+// the line falls below two stations.
+func (l *Line) RemoveEndStation(station *Station, markDirtyCallback func()) {
+	if len(l.Stations) < 2 {
+		return
+	}
+	isLoop := len(l.Stations) > 2 && l.Stations[0] == l.Stations[len(l.Stations)-1]
+
+	idx := -1
+	for i, s := range l.Stations {
+		if s == station {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return
+	}
+	lastIdx := len(l.Stations) - 1
+
+	if isLoop {
+		if station == l.OriginalStart && (idx == 0 || idx == lastIdx) {
+			l.Stations = l.Stations[:lastIdx]
+			if len(l.Stations) > 0 {
+				l.OriginalEnd = l.Stations[len(l.Stations)-1]
+			}
+		} else if station == l.OriginalEnd {
+			l.Stations = l.Stations[:lastIdx]
+			for i, j := 0, len(l.Stations)-1; i < j; i, j = i+1, j-1 {
+				l.Stations[i], l.Stations[j] = l.Stations[j], l.Stations[i]
+			}
+			if len(l.Stations) > 0 {
+				l.OriginalStart = l.Stations[0]
+				l.OriginalEnd = l.Stations[len(l.Stations)-1]
+			}
+		}
+	} else {
+		if idx == 0 {
+			l.Stations = l.Stations[1:]
+			if len(l.Stations) > 0 {
+				l.OriginalStart = l.Stations[0]
+			}
+		} else if idx == lastIdx {
+			l.Stations = l.Stations[:lastIdx]
+			if len(l.Stations) > 0 {
+				l.OriginalEnd = l.Stations[len(l.Stations)-1]
+			}
+		}
+	}
+
+	if len(l.Stations) < 2 {
+		l.MarkedForDeletion = true
+	} else {
+		l.Active = true
+	}
+	if markDirtyCallback != nil {
+		markDirtyCallback()
+	}
+}
+
+// RemoveStation removes all occurrences of station from the line. If the station
+// is an endpoint, delegates to RemoveEndStation. For mid-line removals on loops
+// it repairs the closing entry. Sets MarkedForDeletion when the line falls below
+// two stations.
+func (l *Line) RemoveStation(station *Station, markDirtyCallback func()) {
+	var indices []int
+	for i, s := range l.Stations {
+		if s == station {
+			indices = append(indices, i)
+		}
+	}
+	if len(indices) == 0 {
+		return
+	}
+
+	isLoop := len(l.Stations) > 2 && l.Stations[0] == l.Stations[len(l.Stations)-1]
+	isEndpoint := !isLoop && (indices[0] == 0 || indices[0] == len(l.Stations)-1)
+
+	if isEndpoint {
+		l.RemoveEndStation(station, markDirtyCallback)
+		return
+	}
+
+	if len(indices) > 1 {
+		l.Stations = l.Stations[:len(l.Stations)-1]
+		l.Stations = append(l.Stations[:indices[0]], l.Stations[indices[0]+1:]...)
+		if len(l.Stations) > 0 {
+			l.Stations = append(l.Stations, l.Stations[0])
+		}
+	} else {
+		l.Stations = append(l.Stations[:indices[0]], l.Stations[indices[0]+1:]...)
+	}
+
+	l.Active = len(l.Stations) >= 2
+	if !l.Active {
+		l.MarkedForDeletion = true
+	}
+	if markDirtyCallback != nil {
+		markDirtyCallback()
+	}
+}
+
 func (l *Line) ClearLine(markDirtyCallback func()) {
 	// Refund bridging will be handled inside Game logic, since we need GameState
 	// Here we just clean self

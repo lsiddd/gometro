@@ -20,9 +20,7 @@ type Station struct {
 	OvercrowdProgress float64
 	OvercrowdIsGrace  bool
 
-	ConnectionAnimation *Animation
-	DeliveryAnimation   *Animation
-	AnimateUpgrade      *Animation
+	DeliveryAnimation *Animation
 }
 
 func NewStation(id int, x, y float64, stationType config.StationType) *Station {
