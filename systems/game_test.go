@@ -394,7 +394,7 @@ func TestGetNewStationType_CircleProbability_Balanced(t *testing.T) {
 
 	// With 3 balanced stations, circle probability = 2/6 ≈ 0.33
 	// Run many times to observe distribution
-	counts := map[string]int{}
+	counts := map[config.StationType]int{}
 	for i := 0; i < 300; i++ {
 		typ := g.getNewStationType(gs, 0)
 		counts[typ]++
@@ -419,7 +419,7 @@ func TestGetNewStationType_CircleProbability_ManyCircles(t *testing.T) {
 	gs.GameStartTime = 0
 	gs.LastStationSpawnTime = 0
 
-	counts := map[string]int{}
+	counts := map[config.StationType]int{}
 	for i := 0; i < 300; i++ {
 		typ := g.getNewStationType(gs, 0)
 		counts[typ]++

@@ -194,3 +194,32 @@ func TestFindPath_GraphRebuildOnDirty(t *testing.T) {
 		t.Error("after adding line and marking dirty, path should be found")
 	}
 }
+
+func TestGetGraph_InvalidatesPassengerPathsOnRebuild(t *testing.T) {
+	// When the graph is rebuilt due to GraphDirty, all cached passenger paths
+	// must be nilled so they recompute against the new topology.
+	a := components.NewStation(0, 0, 0, "circle")
+	b := components.NewStation(1, 100, 0, "triangle")
+	line := components.NewLine("#ff0000", 0)
+	line.AddStation(a, -1, nil)
+	line.AddStation(b, -1, nil)
+
+	gs := makeTestState([]*components.Station{a, b}, []*components.Line{line})
+
+	// Give the passenger a stale cached path
+	p := components.NewPassenger(a, "triangle", 0)
+	p.Path = []*components.Station{a, b}
+	p.PathIndex = 1
+	gs.Passengers = append(gs.Passengers, p)
+
+	gm := NewGraphManager()
+	gs.GraphDirty = true
+	gm.GetGraph(gs)
+
+	if p.Path != nil {
+		t.Error("passenger path should be nilled after graph rebuild")
+	}
+	if p.PathIndex != 0 {
+		t.Errorf("passenger PathIndex should be reset to 0, got %d", p.PathIndex)
+	}
+}

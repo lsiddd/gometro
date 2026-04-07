@@ -179,7 +179,7 @@ func (gr *GameRenderer) drawStation(screen *ebiten.Image, station *components.St
 
 	if station.OvercrowdProgress > 0 {
 		if station.OvercrowdProgress <= float64(config.OvercrowdTime) {
-			pulse := float32(config.StationRadius + 8 + math.Sin(nowMs/150)*5)
+			pulse := float32(config.StationRadius + 8 + math.Sin(nowMs/config.OvercrowdPulseHz)*5)
 			bg := color.RGBA{211, 47, 47, 50}
 			fg := color.RGBA{211, 47, 47, 255}
 
@@ -244,7 +244,7 @@ func (gr *GameRenderer) drawPassenger(screen *ebiten.Image, passenger *component
 	drawShape(screen, passenger.Destination, px, py, radius, clr)
 }
 
-func drawShape(screen *ebiten.Image, shapeType string, px, py, radius float32, clr color.Color) {
+func drawShape(screen *ebiten.Image, shapeType config.StationType, px, py, radius float32, clr color.Color) {
 	strokeW := float32(math.Max(1.0, float64(radius)*0.5))
 	switch shapeType {
 	case config.Circle:

@@ -1,6 +1,9 @@
 package components
 
-
+import (
+	"minimetro-go/config"
+	"slices"
+)
 
 type Animation struct {
 	StartTime float64
@@ -11,7 +14,7 @@ type Station struct {
 	ID                 int
 	X                  float64
 	Y                  float64
-	Type               string
+	Type               config.StationType
 	Passengers         []*Passenger
 	IsInterchange     bool
 	OvercrowdProgress float64
@@ -22,7 +25,7 @@ type Station struct {
 	AnimateUpgrade      *Animation
 }
 
-func NewStation(id int, x, y float64, stationType string) *Station {
+func NewStation(id int, x, y float64, stationType config.StationType) *Station {
 	return &Station{
 		ID:         id,
 		X:          x,
@@ -34,7 +37,7 @@ func NewStation(id int, x, y float64, stationType string) *Station {
 
 func (s *Station) Capacity(cityBase int) int {
 	if s.IsInterchange {
-		return 18
+		return cityBase * 3
 	}
 	return cityBase
 }
@@ -46,12 +49,7 @@ func (s *Station) AddPassenger(p *Passenger, currentTime float64) {
 }
 
 func (s *Station) RemovePassenger(p *Passenger, currentTime float64) {
-	for i, passenger := range s.Passengers {
-		if passenger == p {
-			copy(s.Passengers[i:], s.Passengers[i+1:])
-			s.Passengers[len(s.Passengers)-1] = nil
-			s.Passengers = s.Passengers[:len(s.Passengers)-1]
-			break
-		}
+	if i := slices.Index(s.Passengers, p); i >= 0 {
+		s.Passengers = slices.Delete(s.Passengers, i, i+1)
 	}
 }

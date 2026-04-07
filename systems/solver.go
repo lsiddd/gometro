@@ -60,7 +60,7 @@ func (s *Solver) tick(gs *state.GameState, nowMs float64) {
 	s.updateGhost(gs, nowMs)
 
 	// --- Priority 1: EMERGENCY (> 85 % overcrowd) ---
-	critical := s.stationsAbove(gs, 0.85)
+	critical := s.stationsAbove(gs, config.OvercrowdCriticalThreshold)
 	if len(critical) > 0 {
 		sort.Slice(critical, func(i, j int) bool {
 			return critical[i].OvercrowdProgress > critical[j].OvercrowdProgress
@@ -139,7 +139,7 @@ func (s *Solver) updateGhost(gs *state.GameState, nowMs float64) {
 		return
 	}
 	boarded := len(s.ghost.Train.Passengers) > 0
-	timedOut := nowMs-s.ghost.ArmedAt > 8000
+	timedOut := nowMs-s.ghost.ArmedAt > config.GhostLineTimeoutMs
 	if boarded || timedOut {
 		s.ghost.Line.MarkedForDeletion = true
 		s.ghost = ghostLineState{Phase: GhostIdle}
@@ -171,8 +171,9 @@ func (s *Solver) tryGhostLine(gs *state.GameState, target *components.Station, n
 		return false
 	}
 
-	spareLine.AddStation(target, -1, nil)
-	spareLine.AddStation(dest, -1, nil)
+	markDirty := func() { gs.GraphDirty = true }
+	spareLine.AddStation(target, -1, markDirty)
+	spareLine.AddStation(dest, -1, markDirty)
 	gs.Bridges -= cost
 
 	cityCfg := config.Cities[gs.SelectedCity]
@@ -181,7 +182,6 @@ func (s *Solver) tryGhostLine(gs *state.GameState, target *components.Station, n
 	gs.Trains = append(gs.Trains, train)
 	spareLine.Trains = append(spareLine.Trains, train)
 	gs.AvailableTrains--
-	gs.GraphDirty = true
 
 	s.ghost = ghostLineState{
 		Phase:   GhostArmed,
@@ -192,12 +192,12 @@ func (s *Solver) tryGhostLine(gs *state.GameState, target *components.Station, n
 	return true
 }
 
-func (s *Solver) mostNeededType(station *components.Station) string {
-	counts := make(map[string]int)
+func (s *Solver) mostNeededType(station *components.Station) config.StationType {
+	counts := make(map[config.StationType]int)
 	for _, p := range station.Passengers {
 		counts[p.Destination]++
 	}
-	best := ""
+	var best config.StationType
 	bestN := 0
 	for t, n := range counts {
 		if n > bestN {
@@ -208,7 +208,7 @@ func (s *Solver) mostNeededType(station *components.Station) string {
 	return best
 }
 
-func (s *Solver) nearestStationOfType(gs *state.GameState, from *components.Station, stationType string) *components.Station {
+func (s *Solver) nearestStationOfType(gs *state.GameState, from *components.Station, stationType config.StationType) *components.Station {
 	var best *components.Station
 	bestDist := math.MaxFloat64
 	for _, st := range gs.Stations {
@@ -253,8 +253,9 @@ func (s *Solver) tryConnectIsolated(gs *state.GameState, station *components.Sta
 		return false
 	}
 	gs.Bridges -= cost
-	spare.AddStation(station, -1, nil)
-	spare.AddStation(partner, -1, nil)
+	markDirty := func() { gs.GraphDirty = true }
+	spare.AddStation(station, -1, markDirty)
+	spare.AddStation(partner, -1, markDirty)
 	// Auto-spawn first train (line just became active).
 	gs.AvailableTrains--
 	cityCfg := config.Cities[gs.SelectedCity]
@@ -262,7 +263,6 @@ func (s *Solver) tryConnectIsolated(gs *state.GameState, station *components.Sta
 	gs.TrainIDCounter++
 	gs.Trains = append(gs.Trains, train)
 	spare.Trains = append(spare.Trains, train)
-	gs.GraphDirty = true
 	return true
 }
 
@@ -435,8 +435,7 @@ func (s *Solver) tryCloseLoop(gs *state.GameState) bool {
 			continue
 		}
 		gs.Bridges -= cost
-		line.AddStation(line.Stations[0], -1, nil)
-		gs.GraphDirty = true
+		line.AddStation(line.Stations[0], -1, func() { gs.GraphDirty = true })
 		return true
 	}
 	return false
@@ -453,7 +452,7 @@ func (s *Solver) tryInterchange(gs *state.GameState, station *components.Station
 	if station.IsInterchange {
 		return false
 	}
-	if station.OvercrowdProgress < float64(config.OvercrowdTime)*0.85 {
+	if station.OvercrowdProgress < float64(config.OvercrowdTime)*config.OvercrowdCriticalThreshold {
 		return false
 	}
 	station.IsInterchange = true
@@ -578,7 +577,7 @@ func (s *Solver) hygieneScore(line *components.Line, newStation *components.Stat
 	}
 
 	// Bonus for introducing a type not yet on the line.
-	covered := make(map[string]bool)
+	covered := make(map[config.StationType]bool)
 	for _, st := range line.Stations {
 		covered[st.Type] = true
 	}
@@ -608,8 +607,7 @@ func (s *Solver) attachStation(gs *state.GameState, line *components.Line, stati
 	}
 
 	wasActive := line.Active
-	line.AddStation(station, insertIdx, nil)
-	gs.GraphDirty = true
+	line.AddStation(station, insertIdx, func() { gs.GraphDirty = true })
 
 	if !wasActive && line.Active && gs.AvailableTrains > 0 && len(line.Trains) == 0 {
 		gs.AvailableTrains--

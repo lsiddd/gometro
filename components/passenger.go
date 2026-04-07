@@ -1,8 +1,10 @@
 package components
 
+import "minimetro-go/config"
+
 type Passenger struct {
 	CurrentStation       *Station
-	Destination          string
+	Destination          config.StationType
 	OnTrain              *Train
 	Path                 []*Station
 	PathIndex            int
@@ -11,7 +13,7 @@ type Passenger struct {
 	ReservedTrain        *Train
 }
 
-func NewPassenger(station *Station, destination string, currentTime float64) *Passenger {
+func NewPassenger(station *Station, destination config.StationType, currentTime float64) *Passenger {
 	return &Passenger{
 		CurrentStation:       station,
 		Destination:          destination,

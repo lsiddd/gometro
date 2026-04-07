@@ -7,6 +7,7 @@ import (
 	"minimetro-go/components"
 	"minimetro-go/config"
 	"minimetro-go/state"
+	"slices"
 )
 
 type Game struct {
@@ -139,6 +140,22 @@ func (g *Game) Update(gs *state.GameState, deltaTime, screenWidth, screenHeight 
 		return "show_upgrades"
 	}
 
+	g.updateSpawning(gs, screenWidth, screenHeight, nowMs)
+	g.updateOvercrowding(gs, deltaTime)
+	g.updatePassengerReservations(gs, nowMs)
+	g.updateTrains(gs, deltaTime, nowMs)
+	g.cleanupDeletedLines(gs)
+
+	if g.CheckGameOver(gs, nowMs) {
+		gs.GameOver = true
+		gs.Paused = true
+		return "game_over"
+	}
+
+	return ""
+}
+
+func (g *Game) updateSpawning(gs *state.GameState, screenWidth, screenHeight, nowMs float64) {
 	difficultyMultiplier := math.Pow(config.DifficultyScaleFactor, float64(gs.Week-1))
 	currentSpawnRate := config.BaseSpawnRate * difficultyMultiplier
 	currentStationSpawnRate := config.BaseStationSpawnRate * difficultyMultiplier
@@ -152,11 +169,13 @@ func (g *Game) Update(gs *state.GameState, deltaTime, screenWidth, screenHeight 
 		g.SpawnStation(gs, screenWidth, screenHeight)
 		gs.LastStationSpawnTime = nowMs
 	}
+}
 
+func (g *Game) updateOvercrowding(gs *state.GameState, deltaTime float64) {
 	cityCfg := config.Cities[gs.SelectedCity]
 	for _, s := range gs.Stations {
 		cap := s.Capacity(cityCfg.StationCapacity)
-		
+
 		isGrace := false
 		for _, t := range gs.Trains {
 			if t.Line.Active && len(t.Line.Stations) > 1 {
@@ -171,17 +190,17 @@ func (g *Game) Update(gs *state.GameState, deltaTime, screenWidth, screenHeight 
 
 		if len(s.Passengers) > cap {
 			s.OvercrowdProgress += deltaTime * gs.Speed
-		} else {
-			if s.OvercrowdProgress > 0 {
-				s.OvercrowdProgress -= deltaTime * gs.Speed
-				if s.OvercrowdProgress < 0 {
-					s.OvercrowdProgress = 0
-				}
+		} else if s.OvercrowdProgress > 0 {
+			s.OvercrowdProgress -= deltaTime * gs.Speed
+			if s.OvercrowdProgress < 0 {
+				s.OvercrowdProgress = 0
 			}
 		}
 	}
+}
 
-	// Clear all train reservations to recalculate them gracefully
+func (g *Game) updatePassengerReservations(gs *state.GameState, nowMs float64) {
+	// Reset all reservations before recalculating
 	for _, t := range gs.Trains {
 		t.ReservedSeats = 0
 	}
@@ -190,80 +209,77 @@ func (g *Game) Update(gs *state.GameState, deltaTime, screenWidth, screenHeight 
 	}
 
 	for _, p := range gs.Passengers {
-		if p.CurrentStation != nil {
-			var bestTrain *components.Train
-			for _, t := range gs.Trains {
-				if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving {
-					if t.Line.Stations[t.NextStationIndex] == p.CurrentStation {
-						if t.TotalCapacity() - len(t.Passengers) - t.ReservedSeats > 0 {
-							upcoming := t.GetUpcomingStops(p.CurrentStation, true)
-							if canBoard(g.GraphManager, gs, p, upcoming, nowMs) {
-								bestTrain = t
-								break
-							}
+		if p.CurrentStation == nil {
+			continue
+		}
+
+		var bestTrain *components.Train
+		for _, t := range gs.Trains {
+			if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving {
+				if t.Line.Stations[t.NextStationIndex] == p.CurrentStation {
+					if t.TotalCapacity()-len(t.Passengers)-t.ReservedSeats > 0 {
+						upcoming := t.GetUpcomingStops(p.CurrentStation, true)
+						if canBoard(g.GraphManager, gs, p, upcoming, nowMs) {
+							bestTrain = t
+							break
 						}
 					}
 				}
 			}
+		}
 
-			if bestTrain != nil {
-				bestTrain.ReservedSeats++
-				p.ReservedTrain = bestTrain
-			} else {
-				if p.CurrentStation.OvercrowdProgress > float64(config.OvercrowdTime)*0.8 && nowMs-p.LastRouteCalculation > 2000 {
-					p.Path = FindPath(g.GraphManager, gs, p.CurrentStation, p.Destination)
-					p.PathIndex = 1
-					p.LastRouteCalculation = nowMs
-				} else {
-					waitDuration := nowMs - p.WaitStartTime
-					if waitDuration > config.PassengerWaitPatience && nowMs-p.LastRouteCalculation > config.PassengerWaitPatience {
-						p.Path = FindPath(g.GraphManager, gs, p.CurrentStation, p.Destination)
-						p.PathIndex = 1
-						p.LastRouteCalculation = nowMs
-					}
-				}
-			}
+		if bestTrain != nil {
+			bestTrain.ReservedSeats++
+			p.ReservedTrain = bestTrain
+			continue
+		}
+
+		// No incoming train: consider repathing
+		overcrowded := p.CurrentStation.OvercrowdProgress > float64(config.OvercrowdTime)*config.OvercrowdRepathThreshold
+		cooldownElapsed := nowMs-p.LastRouteCalculation > config.RepathCooldownMs
+		waitedTooLong := nowMs-p.WaitStartTime > config.PassengerWaitPatience && cooldownElapsed
+
+		if (overcrowded && cooldownElapsed) || waitedTooLong {
+			p.Path = FindPath(g.GraphManager, gs, p.CurrentStation, p.Destination)
+			p.PathIndex = 1
+			p.LastRouteCalculation = nowMs
 		}
 	}
+}
 
+func (g *Game) updateTrains(gs *state.GameState, deltaTime, nowMs float64) {
 	for _, train := range gs.Trains {
 		g.UpdateTrain(train, gs, deltaTime, nowMs)
 	}
+}
 
-	// Finalize line deletions
+func (g *Game) cleanupDeletedLines(gs *state.GameState) {
 	for i, line := range gs.Lines {
-		if line.MarkedForDeletion && line.Active {
-			gs.AvailableLines++
-			gs.AvailableTrains += len(line.Trains)
-			for _, t := range line.Trains {
-				gs.Carriages += t.CarriageCount
-				t.CarriageCount = 0
-				
-				// Pre-allocate ghost line directly holding color bytes without string fmt allocations
-				dummyLine := components.NewLine("#000000", line.Index) // Placeholder
-				dummyLine.Color = line.Color
-				dummyLine.Active = false
-				dummyLine.MarkedForDeletion = true
-				cpy := make([]*components.Station, len(line.Stations))
-				copy(cpy, line.Stations)
-				dummyLine.Stations = cpy
-				t.Line = dummyLine
-			}
-			line.ClearLine(func() { gs.GraphDirty = true })
-			// Keep slot array intact without fmt.Sprintf
-			clearedLine := components.NewLine("#000000", line.Index)
-			clearedLine.Color = line.Color
-			gs.Lines[i] = clearedLine
+		if !line.MarkedForDeletion || !line.Active {
+			continue
 		}
-	}
 
-	if g.CheckGameOver(gs, nowMs) {
-		gs.GameOver = true
-		gs.Paused = true
-		return "game_over"
-	}
+		gs.AvailableLines++
+		gs.AvailableTrains += len(line.Trains)
+		for _, t := range line.Trains {
+			gs.Carriages += t.CarriageCount
+			t.CarriageCount = 0
 
-	return ""
+			// Attach train to a dummy line so it can finish evacuating passengers
+			dummyLine := components.NewLine("#000000", line.Index)
+			dummyLine.Color = line.Color
+			dummyLine.Active = false
+			dummyLine.MarkedForDeletion = true
+			cpy := make([]*components.Station, len(line.Stations))
+			copy(cpy, line.Stations)
+			dummyLine.Stations = cpy
+			t.Line = dummyLine
+		}
+		line.ClearLine(func() { gs.GraphDirty = true })
+		clearedLine := components.NewLine("#000000", line.Index)
+		clearedLine.Color = line.Color
+		gs.Lines[i] = clearedLine
+	}
 }
 
 func (g *Game) UpdateTrain(t *components.Train, gs *state.GameState, deltaTime, nowMs float64) {
@@ -346,26 +362,16 @@ func (g *Game) UpdateTrain(t *components.Train, gs *state.GameState, deltaTime, 
 			for _, p := range alighted {
 				if p.OnTrain == t {
 					p.OnTrain = nil
-					for i, gp := range gs.Passengers {
-						if gp == p {
-							copy(gs.Passengers[i:], gs.Passengers[i+1:])
-							gs.Passengers[len(gs.Passengers)-1] = nil
-							gs.Passengers = gs.Passengers[:len(gs.Passengers)-1]
-							break
-						}
+					if i := slices.Index(gs.Passengers, p); i >= 0 {
+						gs.Passengers = slices.Delete(gs.Passengers, i, i+1)
 					}
 				}
 			}
 			t.Passengers = nil
 
 			// remove train
-			for i, tr := range gs.Trains {
-				if tr == t {
-					copy(gs.Trains[i:], gs.Trains[i+1:])
-					gs.Trains[len(gs.Trains)-1] = nil
-					gs.Trains = gs.Trains[:len(gs.Trains)-1]
-					break
-				}
+			if i := slices.Index(gs.Trains, t); i >= 0 {
+				gs.Trains = slices.Delete(gs.Trains, i, i+1)
 			}
 			return
 		}
@@ -467,13 +473,8 @@ func (g *Game) processPassengers(t *components.Train, station *components.Statio
 	for _, p := range alighted {
 		if p.OnTrain == t {
 			p.OnTrain = nil
-			for i, gp := range gs.Passengers {
-				if gp == p {
-					copy(gs.Passengers[i:], gs.Passengers[i+1:])
-					gs.Passengers[len(gs.Passengers)-1] = nil
-					gs.Passengers = gs.Passengers[:len(gs.Passengers)-1]
-					break
-				}
+			if i := slices.Index(gs.Passengers, p); i >= 0 {
+				gs.Passengers = slices.Delete(gs.Passengers, i, i+1)
 			}
 		}
 	}
@@ -604,7 +605,7 @@ func (g *Game) SpawnPassenger(gs *state.GameState, nowMs float64) {
 	}
 	station := gs.Stations[rand.Intn(len(gs.Stations))]
 
-	availTypes := make(map[string]bool)
+	availTypes := make(map[config.StationType]bool)
 	for _, s := range gs.Stations {
 		if s.Type != station.Type {
 			availTypes[s.Type] = true
@@ -612,7 +613,7 @@ func (g *Game) SpawnPassenger(gs *state.GameState, nowMs float64) {
 	}
 
 	if len(availTypes) > 0 {
-		var list []string
+		var list []config.StationType
 		for t := range availTypes {
 			list = append(list, t)
 		}
@@ -690,13 +691,13 @@ func (g *Game) SpawnStation(gs *state.GameState, screenWidth, screenHeight float
 	}
 }
 
-func (g *Game) getNewStationType(gs *state.GameState, nowMs float64) string {
+func (g *Game) getNewStationType(gs *state.GameState, nowMs float64) config.StationType {
 	gameTime := nowMs - gs.GameStartTime
 	minutesPlayed := gameTime / 60000.0
 
 	specialTypes := config.SpecialTypes()
 	if minutesPlayed > 2 && rand.Float64() < 0.12 {
-		usedSpecial := make(map[string]bool)
+		usedSpecial := make(map[config.StationType]bool)
 		for _, s := range gs.Stations {
 			for _, sp := range specialTypes {
 				if s.Type == sp {
@@ -705,7 +706,7 @@ func (g *Game) getNewStationType(gs *state.GameState, nowMs float64) string {
 			}
 		}
 
-		var available []string
+		var available []config.StationType
 		for _, sp := range specialTypes {
 			if !usedSpecial[sp] {
 				available = append(available, sp)
@@ -749,7 +750,7 @@ func (g *Game) CheckGameOver(gs *state.GameState, nowMs float64) bool {
 	for _, station := range gs.Stations {
 		limit := float64(config.OvercrowdTime)
 		if station.OvercrowdIsGrace {
-			limit += 2000.0
+			limit += config.OvercrowdGraceExtra
 		}
 		if station.OvercrowdProgress > limit {
 			return true

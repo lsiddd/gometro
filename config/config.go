@@ -34,6 +34,22 @@ const (
 	DifficultyScaleFactor        = 0.8
 	OvercrowdTime                = 45000
 	WeekDuration                 = 60000
+
+	// Overcrowding thresholds and grace periods
+	OvercrowdCriticalThreshold = 0.85  // fraction of OvercrowdTime that triggers AI emergency
+	OvercrowdRepathThreshold   = 0.8   // fraction of OvercrowdTime that triggers eager repath
+	OvercrowdGraceExtra        = 2000  // extra ms when a train is approaching the overcrowded station
+	RepathCooldownMs           = 2000  // minimum interval between forced repath attempts per passenger
+
+	// Pathfinding scoring weights
+	TransferPenalty        = 2.5  // extra score per line change in BFS
+	OvercrowdScoreFactor   = 4.0  // score penalty multiplier for overcrowded intermediate stations
+
+	// Solver timing
+	GhostLineTimeoutMs = 8000 // ms before an unused ghost line is discarded
+
+	// Rendering
+	OvercrowdPulseHz = 150.0 // divisor used in sin(nowMs/OvercrowdPulseHz) for station pulse
 )
 
 var LineColors = []string{
@@ -91,24 +107,26 @@ var Rivers = map[string][][]PointF{
 	},
 }
 
+type StationType string
+
 const (
-	Circle   = "circle"
-	Triangle = "triangle"
-	Square   = "square"
-	Pentagon = "pentagon"
-	Diamond  = "diamond"
-	Star     = "star"
-	Cross    = "cross"
+	Circle   StationType = "circle"
+	Triangle StationType = "triangle"
+	Square   StationType = "square"
+	Pentagon StationType = "pentagon"
+	Diamond  StationType = "diamond"
+	Star     StationType = "star"
+	Cross    StationType = "cross"
 )
 
-func AllTypes() []string {
-	return []string{Circle, Triangle, Square, Pentagon, Diamond, Star, Cross}
+func AllTypes() []StationType {
+	return []StationType{Circle, Triangle, Square, Pentagon, Diamond, Star, Cross}
 }
 
-func BasicTypes() []string {
-	return []string{Circle, Triangle, Square}
+func BasicTypes() []StationType {
+	return []StationType{Circle, Triangle, Square}
 }
 
-func SpecialTypes() []string {
-	return []string{Pentagon, Diamond, Star, Cross}
+func SpecialTypes() []StationType {
+	return []StationType{Pentagon, Diamond, Star, Cross}
 }

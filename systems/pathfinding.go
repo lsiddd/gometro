@@ -2,6 +2,7 @@ package systems
 
 import (
 	"minimetro-go/components"
+	"minimetro-go/config"
 	"minimetro-go/state"
 )
 
@@ -29,6 +30,12 @@ func (gm *GraphManager) GetGraph(gameState *state.GameState) map[*components.Sta
 	if gameState.GraphDirty || gm.graph == nil {
 		gm.graph = gm.buildGraph(gameState)
 		gameState.GraphDirty = false
+		// Topology changed: cached paths may now be invalid.
+		// Nil them so each passenger recomputes lazily on next boarding attempt.
+		for _, p := range gameState.Passengers {
+			p.Path = nil
+			p.PathIndex = 0
+		}
 	}
 	return gm.graph
 }
@@ -61,7 +68,7 @@ func (gm *GraphManager) buildGraph(gameState *state.GameState) map[*components.S
 }
 
 // Simple BFS that prioritizes fewer transfers (simplified from A* for Go without heavy heap deps)
-func FindPath(gm *GraphManager, gameState *state.GameState, startStation *components.Station, destinationType string) []*components.Station {
+func FindPath(gm *GraphManager, gameState *state.GameState, startStation *components.Station, destinationType config.StationType) []*components.Station {
 	if startStation == nil {
 		return nil
 	}
@@ -96,7 +103,7 @@ func FindPath(gm *GraphManager, gameState *state.GameState, startStation *compon
 		queue = queue[1:]
 
 		if curr.Station.Type == destinationType {
-			score := float64(len(curr.Path)) + float64(curr.Transfers)*2.5
+			score := float64(len(curr.Path)) + float64(curr.Transfers)*config.TransferPenalty
 			if score < bestScore {
 				bestScore = score
 				bestPath = curr.Path
@@ -113,9 +120,9 @@ func FindPath(gm *GraphManager, gameState *state.GameState, startStation *compon
 				newTransfers++
 			}
 
-			score := float64(len(curr.Path)) + float64(newTransfers)*2.5
+			score := float64(len(curr.Path)) + float64(newTransfers)*config.TransferPenalty
 			if neighbor.OvercrowdProgress > 0 && neighbor.Type != destinationType {
-				score += (neighbor.OvercrowdProgress / 45000.0) * 4.0
+				score += (neighbor.OvercrowdProgress / config.OvercrowdTime) * config.OvercrowdScoreFactor
 			}
 
 			// Limit path length to 20 to prevent runaway BFS in complex cyclic graphs

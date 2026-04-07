@@ -387,8 +387,7 @@ func (ih *InputHandler) handleMouseUp(gs *state.GameState, button int) bool {
 
 			if gs.Bridges >= cost {
 				gs.Bridges -= cost
-				lineObj.AddStation(targetStation, index+1, nil)
-				gs.GraphDirty = true
+				lineObj.AddStation(targetStation, index+1, func() { gs.GraphDirty = true })
 			}
 		}
 	} else if ih.IsDrawingLine && len(ih.CurrentPath) > 0 && targetStation != nil {
