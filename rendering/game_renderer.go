@@ -206,10 +206,11 @@ func (gr *GameRenderer) drawStation(screen *ebiten.Image, station *components.St
 		}
 	}
 
-	if station.Type == config.Circle {
+	switch station.Type {
+	case config.Circle:
 		vector.FillCircle(screen, x, y, radius, fillClr, true)
 		vector.StrokeCircle(screen, x, y, radius, 3.5, borderClr, true)
-	} else if station.Type == config.Triangle {
+	case config.Triangle:
 		h := radius * 1.7
 		pts := [][2]float32{
 			{x, y - h*0.6},
@@ -222,10 +223,35 @@ func (gr *GameRenderer) drawStation(screen *ebiten.Image, station *components.St
 			p2 := pts[(i+1)%len(pts)]
 			vector.StrokeLine(screen, p1[0], p1[1], p2[0], p2[1], 3.5, borderClr, true)
 		}
-	} else if station.Type == config.Square {
+	case config.Square:
 		size := radius * 1.6
 		vector.FillRect(screen, x-size/2, y-size/2, size, size, fillClr, true)
 		vector.StrokeRect(screen, x-size/2, y-size/2, size, size, 3.5, borderClr, true)
+	case config.Pentagon:
+		fillStationPolygon(screen, x, y, radius*1.1, 5, fillClr, borderClr)
+	case config.Diamond:
+		pts := [][2]float32{
+			{x, y - radius*1.3},
+			{x + radius, y},
+			{x, y + radius*1.3},
+			{x - radius, y},
+		}
+		fillPolygon(screen, pts, fillClr)
+		for i := range pts {
+			p1, p2 := pts[i], pts[(i+1)%len(pts)]
+			vector.StrokeLine(screen, p1[0], p1[1], p2[0], p2[1], 3.5, borderClr, true)
+		}
+	case config.Star:
+		fillStarStation(screen, x, y, radius*1.2, fillClr, borderClr)
+	case config.Cross:
+		arm := radius * 1.1
+		thick := radius * 0.5
+		// Filled cross via two overlapping rects.
+		vector.FillRect(screen, x-arm, y-thick/2, arm*2, thick, fillClr, true)
+		vector.FillRect(screen, x-thick/2, y-arm, thick, arm*2, fillClr, true)
+		// Border strokes along each arm edge.
+		vector.StrokeRect(screen, x-arm, y-thick/2, arm*2, thick, 3.0, borderClr, true)
+		vector.StrokeRect(screen, x-thick/2, y-arm, thick, arm*2, 3.0, borderClr, true)
 	}
 
 	if station.IsInterchange {
@@ -304,6 +330,40 @@ func drawShape(screen *ebiten.Image, shapeType config.StationType, px, py, radiu
 	}
 }
 
+// fillStationPolygon draws a filled regular polygon station (e.g. Pentagon)
+// with a solid fill and a border stroke.
+func fillStationPolygon(screen *ebiten.Image, cx, cy, radius float32, sides int, fillClr, borderClr color.RGBA) {
+	pts := make([][2]float32, sides)
+	for i := range pts {
+		a := float64(i)*2*math.Pi/float64(sides) - math.Pi/2
+		pts[i] = [2]float32{cx + radius*float32(math.Cos(a)), cy + radius*float32(math.Sin(a))}
+	}
+	fillPolygon(screen, pts, fillClr)
+	for i := range pts {
+		p1, p2 := pts[i], pts[(i+1)%len(pts)]
+		vector.StrokeLine(screen, p1[0], p1[1], p2[0], p2[1], 3.5, borderClr, true)
+	}
+}
+
+// fillStarStation draws a filled 5-pointed star station with fill and border.
+func fillStarStation(screen *ebiten.Image, cx, cy, radius float32, fillClr, borderClr color.RGBA) {
+	inner := radius * 0.45
+	pts := make([][2]float32, 10)
+	for i := range pts {
+		r := radius
+		if i%2 == 1 {
+			r = inner
+		}
+		a := float64(i)*math.Pi/5 - math.Pi/2
+		pts[i] = [2]float32{cx + r*float32(math.Cos(a)), cy + r*float32(math.Sin(a))}
+	}
+	fillPolygon(screen, pts, fillClr)
+	for i := range pts {
+		p1, p2 := pts[i], pts[(i+1)%len(pts)]
+		vector.StrokeLine(screen, p1[0], p1[1], p2[0], p2[1], 3.5, borderClr, true)
+	}
+}
+
 func drawPolygon(screen *ebiten.Image, cx, cy, radius float32, sides int, clr color.Color, strokeW float32) {
 	pts := make([][2]float32, sides)
 	for i := range pts {
@@ -341,9 +401,13 @@ func (gr *GameRenderer) drawTrain(screen *ebiten.Image, train *components.Train)
 	height := float32(config.TrainHeight)
 	width := float32(config.TrainWidth)
 
+	n := len(train.Line.Stations)
+	if train.CurrentStationIndex >= n {
+		return
+	}
 	currentSt := train.Line.Stations[train.CurrentStationIndex]
 	var nextSt *components.Station
-	if train.NextStationIndex < len(train.Line.Stations) {
+	if train.NextStationIndex < n {
 		nextSt = train.Line.Stations[train.NextStationIndex]
 	}
 	if currentSt == nil || nextSt == nil {

@@ -175,7 +175,7 @@ func (g *Game) updateOvercrowding(gs *state.GameState, deltaTime float64) {
 
 		isGrace := false
 		for _, t := range gs.Trains {
-			if t.Line.Active && len(t.Line.Stations) > 1 {
+			if t.Line.Active && len(t.Line.Stations) > 1 && t.NextStationIndex < len(t.Line.Stations) {
 				nextStation := t.Line.Stations[t.NextStationIndex]
 				if nextStation == s && t.State == components.TrainMoving {
 					isGrace = true
@@ -212,7 +212,8 @@ func (g *Game) updatePassengerReservations(gs *state.GameState, nowMs float64) {
 
 		var bestTrain *components.Train
 		for _, t := range gs.Trains {
-			if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving {
+			if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving &&
+				t.NextStationIndex < len(t.Line.Stations) {
 				if t.Line.Stations[t.NextStationIndex] == p.CurrentStation {
 					if t.TotalCapacity()-len(t.Passengers)-t.ReservedSeats > 0 {
 						upcoming := t.GetUpcomingStops(p.CurrentStation, true)
@@ -245,8 +246,15 @@ func (g *Game) updatePassengerReservations(gs *state.GameState, nowMs float64) {
 }
 
 func (g *Game) updateTrains(gs *state.GameState, deltaTime, nowMs float64) {
-	for _, train := range gs.Trains {
-		g.UpdateTrain(train, gs, deltaTime, nowMs)
+	// Snapshot the slice before iterating: UpdateTrain may call gs.RemoveTrain,
+	// which calls slices.Delete and zeroes the tail of gs.Trains. Iterating the
+	// original range would then dereference nil entries at the zeroed positions.
+	snapshot := make([]*components.Train, len(gs.Trains))
+	copy(snapshot, gs.Trains)
+	for _, train := range snapshot {
+		if train != nil {
+			g.UpdateTrain(train, gs, deltaTime, nowMs)
+		}
 	}
 }
 
@@ -256,7 +264,10 @@ func (g *Game) cleanupDeletedLines(gs *state.GameState) {
 			continue
 		}
 
-		gs.AvailableLines++
+		// Note: gs.AvailableLines is NOT incremented here. The slot being freed
+		// was already within the allocation (ghost lines use existing spare slots;
+		// there is no line-delete UI that would have decremented AvailableLines).
+		// Incrementing would push the count past len(gs.Lines) and crash the UI.
 		gs.AvailableTrains += len(line.Trains)
 		for _, t := range line.Trains {
 			gs.Carriages += t.CarriageCount

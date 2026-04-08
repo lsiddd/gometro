@@ -7,6 +7,7 @@ import (
 	"minimetro-go/config"
 	"minimetro-go/state"
 	"sort"
+	"time"
 )
 
 // GhostPhase tracks the lifecycle of a temporary "ghost" line used to rapidly
@@ -25,28 +26,69 @@ type ghostLineState struct {
 	ArmedAt float64 // sim time when armed; abort after 8 000 ms
 }
 
+// Circle-cluster detection thresholds.
+const (
+	circleDensityRadius   = 200.0 // pixels: radius for cluster scan
+	circleDensityMinCount = 3     // minimum circles in range to trigger Titan Line
+)
+
+// SA launch interval: how often (in sim-ms) we start a new background search.
+const saLaunchIntervalMs = 2000.0
+
 // Solver is the autonomous AI player. When Enabled, it calls tick() every
 // runInterval ms of simulation time and makes exactly one topology-changing
 // action per tick, prioritised by urgency.
+//
+// Advanced capabilities added on top of the base solver:
+//   - Simulated Annealing topology search (background goroutine, forward sim).
+//   - Betweenness Centrality tracking for preemptive interchange placement.
+//   - Circle-cluster detection ("Paradise of Circles") → Titan Line response.
+//   - TOC-style priority queue: stations sorted by overcrowd fraction.
 type Solver struct {
 	Enabled     bool
 	lastRunMs   float64
 	runInterval float64
 	ghost       ghostLineState
+
+	// SA background search
+	saResultCh  <-chan SAResult
+	lastSAMs    float64
+
+	// Centrality cache (recomputed on graph change)
+	centrality       map[*components.Station]float64
+	centralityDirty  bool
 }
 
 func NewSolver() *Solver {
 	return &Solver{
-		Enabled:     false,
-		runInterval: 300.0,
+		Enabled:         false,
+		runInterval:     300.0,
+		centralityDirty: true,
 	}
 }
 
 // Update is called every frame from main.go, after GameSystem.Update.
-func (s *Solver) Update(gs *state.GameState, _ *GraphManager, nowMs float64) {
+func (s *Solver) Update(gs *state.GameState, gm *GraphManager, nowMs float64) {
 	if !s.Enabled || gs.Paused || gs.GameOver {
 		return
 	}
+
+	// Recompute centrality whenever graph topology has changed.
+	if gs.GraphDirty || s.centralityDirty {
+		s.centrality = BetweennessCentrality(gs, gm)
+		s.centralityDirty = false
+	}
+
+	// Poll completed SA result (non-blocking).
+	if s.saResultCh != nil {
+		select {
+		case result := <-s.saResultCh:
+			s.saResultCh = nil
+			s.applySAResult(gs, result, nowMs)
+		default:
+		}
+	}
+
 	// Respond faster when stations are near overcrowding.
 	interval := s.runInterval
 	if len(s.stationsAbove(gs, config.OvercrowdCriticalThreshold)) > 0 {
@@ -58,7 +100,31 @@ func (s *Solver) Update(gs *state.GameState, _ *GraphManager, nowMs float64) {
 		return
 	}
 	s.lastRunMs = nowMs
-	s.tick(gs, nowMs)
+	s.tick(gs, gm, nowMs)
+
+	// Launch a new SA search if none is running and enough time has elapsed.
+	if s.saResultCh == nil && nowMs-s.lastSAMs >= saLaunchIntervalMs {
+		s.lastSAMs = nowMs
+		s.saResultCh = SAOptimize(gs, 500*time.Millisecond)
+		log.Printf("[Solver] SA search launched")
+	}
+}
+
+// applySAResult applies the best SA action to the real game state, provided it
+// represents a genuine improvement over the current network cost.
+func (s *Solver) applySAResult(gs *state.GameState, result SAResult, nowMs float64) {
+	if result.Action == nil {
+		return
+	}
+	baseline := NetworkCost(gs)
+	if result.Score >= baseline {
+		log.Printf("[Solver] SA result (%.1f) not better than baseline (%.1f) — discarded", result.Score, baseline)
+		return
+	}
+	if applyPerturbation(gs, result.Action) {
+		log.Printf("[Solver] SA action applied (type=%d line=%d) score %.1f → %.1f",
+			result.Action.Type, result.Action.LineIdx, baseline, result.Score)
+	}
 }
 
 // ChooseUpgrade picks the most beneficial upgrade for the current game state.
@@ -89,6 +155,11 @@ func (s *Solver) scoreUpgrade(gs *state.GameState, upgrade string) float64 {
 		for _, st := range gs.Stations {
 			score += st.OvercrowdProgress * 0.04
 		}
+		// Bonus proportional to how geographically extended the existing lines
+		// are: long lines signal that the network needs more routes, not longer ones.
+		score += s.avgLineArcLength(gs) * 0.06
+		// Base preference so that new lines are always competitive early on.
+		score += 18
 		return score
 
 	case UpgradeCarriage:
@@ -146,11 +217,13 @@ func (s *Solver) scoreUpgrade(gs *state.GameState, upgrade string) float64 {
 }
 
 // tick executes at most one action, in strict priority order.
-func (s *Solver) tick(gs *state.GameState, nowMs float64) {
+func (s *Solver) tick(gs *state.GameState, gm *GraphManager, nowMs float64) {
 	// Always advance ghost state machine first (no topology change, no early return).
 	s.updateGhost(gs, nowMs)
 
-	// --- Priority 1: EMERGENCY (> 85 % overcrowd) ---
+	// --- Priority 1: EMERGENCY (> 85 % overcrowd) — TOC priority queue ---
+	// Stations are sorted by overcrowd fraction descending (Theory of Constraints:
+	// attack the binding constraint first).
 	critical := s.stationsAbove(gs, config.OvercrowdCriticalThreshold)
 	if len(critical) > 0 {
 		sort.Slice(critical, func(i, j int) bool {
@@ -198,6 +271,12 @@ func (s *Solver) tick(gs *state.GameState, nowMs float64) {
 		}
 	}
 
+	// --- Priority 3.5: rebalance trains between over/under-provisioned lines ---
+	if s.tryRebalanceTrains(gs) {
+		log.Printf("[Solver] Rebalanced train between lines")
+		return
+	}
+
 	// --- Priority 4: add carriages to loaded trains ---
 	if gs.Carriages > 0 {
 		if s.tryAddCarriage(gs) {
@@ -206,13 +285,49 @@ func (s *Solver) tick(gs *state.GameState, nowMs float64) {
 		}
 	}
 
-	// --- Priority 5: close loops on long lines ---
-	if s.tryCloseLoop(gs) {
-		log.Printf("[Solver] Closed loop on a line")
-		return
+	// --- Priority 4.5: close loops proactively ---
+	// Loops are the preferred line topology: they eliminate terminal starvation
+	// and distribute trains evenly. Close any eligible line (≥ 3 stations) as
+	// soon as the network is fully connected.
+	if len(s.isolatedStations(gs)) == 0 {
+		if s.tryCloseLoop(gs) {
+			log.Printf("[Solver] Closed loop on a line")
+			return
+		}
 	}
 
-	// --- Priority 6: upgrade interchange on moderately overcrowded station ---
+	// --- Priority 5: respond to circle-cluster ("Paradise of Circles") ---
+	// A Titan Line is a short dedicated drain connecting a circle-heavy cluster
+	// to the nearest non-circle station, absorbing overflow before it cascades.
+	clusters := s.detectCircleClusters(gs, circleDensityRadius, circleDensityMinCount)
+	for _, hub := range clusters {
+		if s.tryTitanLine(gs, hub) {
+			log.Printf("[Solver] Titan Line deployed for circle cluster at (%.0f,%.0f)", hub.X, hub.Y)
+			return
+		}
+	}
+
+	// --- Priority 5.5: split overly long loops into two interlinked rings ---
+	// A loop with too many stations has a huge cycle time, causing local starvation
+	// at the far end. Splitting it at the midpoint creates two smaller rings that
+	// share a junction station, halving the worst-case wait time.
+	if len(s.isolatedStations(gs)) == 0 {
+		if s.trySplitLoop(gs) {
+			log.Printf("[Solver] Split long loop into two rings")
+			return
+		}
+	}
+
+	// --- Priority 6: preemptive interchange at high-centrality junction ---
+	// Upgrade the highest-centrality non-interchange station before it overflows.
+	if gs.Interchanges > 0 {
+		if s.tryUpgradeCentralNode(gs) {
+			log.Printf("[Solver] Preemptive interchange at high-centrality station")
+			return
+		}
+	}
+
+	// --- Priority 7: upgrade interchange on moderately overcrowded station ---
 	if gs.Interchanges > 0 {
 		if s.tryUpgradeInterchange(gs) {
 			log.Printf("[Solver] Upgraded interchange")
@@ -318,22 +433,72 @@ func (s *Solver) nearestStationOfType(gs *state.GameState, from *components.Stat
 // Connect isolated stations
 // ---------------------------------------------------------------------------
 
+// avgActiveLineLength returns the mean number of (real) stations across all
+// active lines. Used to decide when to favour starting a new line.
+func (s *Solver) avgActiveLineLength(gs *state.GameState) float64 {
+	total, count := 0, 0
+	for i := 0; i < gs.AvailableLines && i < len(gs.Lines); i++ {
+		l := gs.Lines[i]
+		if !l.Active || l.MarkedForDeletion {
+			continue
+		}
+		n := len(l.Stations)
+		isLoop := n >= 3 && l.Stations[0] == l.Stations[n-1]
+		if isLoop {
+			n-- // don't count the duplicate closing station
+		}
+		total += n
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return float64(total) / float64(count)
+}
+
 func (s *Solver) tryConnectIsolated(gs *state.GameState, station *components.Station) bool {
-	// First: extend an existing active line.
+	// When a spare line and train are available AND existing lines are already
+	// long (avg ≥ 4 real stations), prefer starting a new dedicated line over
+	// growing an already-large one. This keeps individual lines short, which
+	// produces smaller cycle times and better geographic coverage.
+	const newLineAvgLenThreshold = 4.0
+	if gs.AvailableTrains > 0 {
+		spare := s.firstSpareLine(gs)
+		if spare != nil && s.avgActiveLineLength(gs) >= newLineAvgLenThreshold {
+			if s.startNewLineFor(gs, spare, station) {
+				return true
+			}
+		}
+	}
+
+	// Extend an existing active line (open or loop).
 	line, idx, ok := s.bestLineForStation(gs, station)
 	if ok {
 		s.attachStation(gs, line, station, idx)
 		return true
 	}
 
-	// Second: start a new line if a spare slot and a spare train are available.
-	if gs.AvailableTrains == 0 {
-		return false
+	// Open a closed loop to make room, then extend to the isolated station.
+	if s.tryOpenLoopAndExtend(gs, station) {
+		return true
 	}
-	spare := s.firstSpareLine(gs)
-	if spare == nil {
-		return false
+
+	// Last resort: start a new line even if avg length is below threshold.
+	if gs.AvailableTrains > 0 {
+		spare := s.firstSpareLine(gs)
+		if spare != nil {
+			if s.startNewLineFor(gs, spare, station) {
+				return true
+			}
+		}
 	}
+
+	return false
+}
+
+// startNewLineFor starts a brand-new line on spare for station, pairing it with
+// the best available partner. Returns false when no viable partner exists.
+func (s *Solver) startNewLineFor(gs *state.GameState, spare *components.Line, station *components.Station) bool {
 	partner := s.bestPartnerForNewLine(gs, station)
 	if partner == nil {
 		return false
@@ -346,7 +511,6 @@ func (s *Solver) tryConnectIsolated(gs *state.GameState, station *components.Sta
 	markDirty := func() { gs.GraphDirty = true }
 	spare.AddStation(station, -1, markDirty)
 	spare.AddStation(partner, -1, markDirty)
-	// Auto-spawn first train (line just became active).
 	gs.AvailableTrains--
 	cityCfg := config.Cities[gs.SelectedCity]
 	train := components.NewTrain(gs.TrainIDCounter, spare, cityCfg.TrainCapacity, config.TrainMaxSpeed)
@@ -355,9 +519,56 @@ func (s *Solver) tryConnectIsolated(gs *state.GameState, station *components.Sta
 	return true
 }
 
+// tryOpenLoopAndExtend opens a closed loop on the line best positioned to reach
+// station, then extends the newly-opened tail to include station.
+func (s *Solver) tryOpenLoopAndExtend(gs *state.GameState, station *components.Station) bool {
+	markDirty := func() { gs.GraphDirty = true }
+
+	var bestLine *components.Line
+	bestDist := math.MaxFloat64
+
+	for i := 0; i < gs.AvailableLines && i < len(gs.Lines); i++ {
+		line := gs.Lines[i]
+		if !line.Active || line.MarkedForDeletion {
+			continue
+		}
+		n := len(line.Stations)
+		if n < 2 || line.Stations[0] != line.Stations[n-1] {
+			continue // not a loop
+		}
+		// Distance from the tail (which equals head after opening) to station.
+		tail := line.Stations[n-2] // the real last station before loop closure
+		dist := math.Hypot(tail.X-station.X, tail.Y-station.Y)
+		cost := s.riverCost(gs, tail, station)
+		if gs.Bridges < cost {
+			continue
+		}
+		if dist < bestDist {
+			bestDist = dist
+			bestLine = line
+		}
+	}
+
+	if bestLine == nil {
+		return false
+	}
+
+	n := len(bestLine.Stations)
+	// Remove the loop-closure duplicate (the last element equals the first).
+	bestLine.RemoveEndStation(bestLine.Stations[n-1], markDirty)
+	// Now extend to the isolated station at the tail.
+	cost := s.riverCost(gs, bestLine.Stations[len(bestLine.Stations)-1], station)
+	gs.Bridges -= cost
+	bestLine.AddStation(station, -1, markDirty)
+	return true
+}
+
 // bestPartnerForNewLine finds the best second station when starting a brand-new
 // line for station. Prefers a different type, prefers proximity, excludes stations
 // that would require more bridges than available.
+// Axis-aligned partners (roughly N-S or E-W from station) receive a bonus
+// because they form straight segments that minimise angle penalties and act as
+// the "spine" of the network.
 func (s *Solver) bestPartnerForNewLine(gs *state.GameState, station *components.Station) *components.Station {
 	isolatedSet := make(map[*components.Station]bool)
 	for _, st := range s.isolatedStations(gs) {
@@ -385,12 +596,38 @@ func (s *Solver) bestPartnerForNewLine(gs *state.GameState, station *components.
 		}
 		// Prefer candidates with more waiting passengers (higher demand).
 		score += float64(len(candidate.Passengers)) * 2
+		// Axis-alignment bonus: prefer N-S or E-W segments as they form the
+		// backbone grid and create natural soft-turn junctions later.
+		angle := math.Atan2(candidate.Y-station.Y, candidate.X-station.X)
+		axisBonus := math.Abs(math.Cos(2*angle)) * 12 // peaks at 0°,90°,180°,270°
+		score += axisBonus
 		if score > bestScore {
 			bestScore = score
 			best = candidate
 		}
 	}
 	return best
+}
+
+// insertionTurnPenalty returns a score penalty for inserting a station B between
+// A and C such that the turn A→B→C is sharp. The penalty is proportional to
+// cos(ABC): 0 for straight/obtuse (≥ 90°), up to 50 for a direct U-turn.
+func (s *Solver) insertionTurnPenalty(a, b, c *components.Station) float64 {
+	if a == nil || b == nil || c == nil || a == c {
+		return 0
+	}
+	v1x, v1y := a.X-b.X, a.Y-b.Y
+	v2x, v2y := c.X-b.X, c.Y-b.Y
+	d1 := math.Hypot(v1x, v1y)
+	d2 := math.Hypot(v2x, v2y)
+	if d1 < 1e-6 || d2 < 1e-6 {
+		return 0
+	}
+	cosTheta := (v1x*v2x + v1y*v2y) / (d1 * d2)
+	if cosTheta <= 0 {
+		return 0
+	}
+	return cosTheta * 50
 }
 
 // ---------------------------------------------------------------------------
@@ -510,17 +747,102 @@ func (s *Solver) tryAddCarriageToLineThroughStation(gs *state.GameState, station
 }
 
 // ---------------------------------------------------------------------------
+// Train rebalancing
+// ---------------------------------------------------------------------------
+
+// tryRebalanceTrains steals an empty train from an over-provisioned line
+// (few passengers per train) and returns it to the available pool, where the
+// normal deployment logic will redeploy it to a needier line.
+func (s *Solver) tryRebalanceTrains(gs *state.GameState) bool {
+	const donorThreshold    = 4.0 // passengers-per-train; below this a line is over-provisioned
+	const recipientMinRatio = 8.0 // passengers-per-train; above this a line genuinely needs more
+
+	var bestDonor *components.Line
+	lowestRatio := math.MaxFloat64
+
+	for i := 0; i < gs.AvailableLines && i < len(gs.Lines); i++ {
+		line := gs.Lines[i]
+		if !line.Active || line.MarkedForDeletion || len(line.Trains) < 2 {
+			continue
+		}
+		load := s.passengerLoadOnLine(gs, line)
+		ratio := float64(load) / float64(len(line.Trains))
+		if ratio < lowestRatio {
+			lowestRatio = ratio
+			bestDonor = line
+		}
+	}
+
+	if bestDonor == nil || lowestRatio > donorThreshold {
+		return false
+	}
+
+	// Check that at least one other line actually needs more trains.
+	needsTrains := false
+	for i := 0; i < gs.AvailableLines && i < len(gs.Lines); i++ {
+		line := gs.Lines[i]
+		if !line.Active || line.MarkedForDeletion || line == bestDonor {
+			continue
+		}
+		if len(line.Trains) >= config.MaxTrainsPerLine || len(line.Trains) == 0 {
+			continue
+		}
+		load := s.passengerLoadOnLine(gs, line)
+		ratio := float64(load) / float64(len(line.Trains))
+		if ratio >= recipientMinRatio {
+			needsTrains = true
+			break
+		}
+	}
+
+	// Also steal if there are isolated stations but no available trains.
+	if !needsTrains && (gs.AvailableTrains > 0 || len(s.isolatedStations(gs)) == 0) {
+		return false
+	}
+
+	return s.stealTrainFromLine(gs, bestDonor)
+}
+
+// stealTrainFromLine removes an empty (no passengers) train from line and
+// returns it to the global pool (gs.AvailableTrains++).
+func (s *Solver) stealTrainFromLine(gs *state.GameState, line *components.Line) bool {
+	for i, t := range line.Trains {
+		if len(t.Passengers) > 0 {
+			continue
+		}
+		line.Trains = append(line.Trains[:i], line.Trains[i+1:]...)
+		for j, gt := range gs.Trains {
+			if gt == t {
+				gs.Trains = append(gs.Trains[:j], gs.Trains[j+1:]...)
+				break
+			}
+		}
+		gs.Carriages += t.CarriageCount
+		gs.AvailableTrains++
+		gs.GraphDirty = true
+		return true
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
 // Loop closing
 // ---------------------------------------------------------------------------
 
 func (s *Solver) tryCloseLoop(gs *state.GameState) bool {
+	// Prefer short lines first: a 3-station triangle loop has the smallest cycle
+	// time and is the ideal building block before the map grows.
+	var best *components.Line
+	bestLen := math.MaxInt32
+
 	for i := 0; i < gs.AvailableLines && i < len(gs.Lines); i++ {
 		line := gs.Lines[i]
 		if !line.Active || line.MarkedForDeletion {
 			continue
 		}
 		n := len(line.Stations)
-		if n < 4 {
+		// Minimum 3 stations to form a meaningful loop (triangle).
+		if n < 3 {
 			continue
 		}
 		// Already a loop?
@@ -531,11 +853,109 @@ func (s *Solver) tryCloseLoop(gs *state.GameState) bool {
 		if gs.Bridges < cost {
 			continue
 		}
-		gs.Bridges -= cost
-		line.AddStation(line.Stations[0], -1, func() { gs.GraphDirty = true })
-		return true
+		if n < bestLen {
+			bestLen = n
+			best = line
+		}
 	}
-	return false
+
+	if best == nil {
+		return false
+	}
+	n := len(best.Stations)
+	cost := s.riverCost(gs, best.Stations[n-1], best.Stations[0])
+	gs.Bridges -= cost
+	best.AddStation(best.Stations[0], -1, func() { gs.GraphDirty = true })
+	return true
+}
+
+// trySplitLoop finds the longest active loop with at least splitMinStations
+// unique stations and splits it at its midpoint into two smaller interlinked
+// rings. The split station becomes a shared junction between both rings.
+//
+// Before: A→B→C→D→E→F→A  (6 unique stations, long cycle time)
+// After:  A→B→C→A  +  C→D→E→F→C  (two 3-station rings, half the cycle time)
+//
+// The junction station (C) is served by both rings, acting as an implicit
+// interchange that keeps the network connected.
+func (s *Solver) trySplitLoop(gs *state.GameState) bool {
+	const splitMinStations = 6 // only split loops that are already large
+
+	spare := s.firstSpareLine(gs)
+	if spare == nil || gs.AvailableTrains == 0 {
+		return false
+	}
+
+	// Find the longest active loop to split.
+	var bestLoop *components.Line
+	bestLen := 0
+	for i := 0; i < gs.AvailableLines && i < len(gs.Lines); i++ {
+		line := gs.Lines[i]
+		if !line.Active || line.MarkedForDeletion {
+			continue
+		}
+		n := len(line.Stations)
+		if n < 2 || line.Stations[0] != line.Stations[n-1] {
+			continue
+		}
+		unique := n - 1
+		if unique > bestLen {
+			bestLen = unique
+			bestLoop = line
+		}
+	}
+
+	if bestLoop == nil || bestLen < splitMinStations {
+		return false
+	}
+
+	markDirty := func() { gs.GraphDirty = true }
+	n := len(bestLoop.Stations)
+	uniqueN := n - 1
+	mid := uniqueN / 2 // index of the junction/split station
+
+	splitStation := bestLoop.Stations[mid]
+	lastStation := bestLoop.Stations[uniqueN-1]
+
+	// Compute total bridge cost before committing.
+	costClose2 := s.riverCost(gs, lastStation, splitStation)   // close new ring
+	costClose1 := s.riverCost(gs, splitStation, bestLoop.Stations[0]) // close original ring
+	if gs.Bridges < costClose1+costClose2 {
+		return false
+	}
+
+	// Step 1: Open the original loop (remove the closing duplicate).
+	bestLoop.RemoveEndStation(bestLoop.Stations[n-1], markDirty)
+	clampTrainIndices(bestLoop)
+
+	// Step 2: Build the spare line with the second half (mid .. uniqueN-1).
+	for i := mid; i < uniqueN; i++ {
+		spare.AddStation(bestLoop.Stations[i], -1, markDirty)
+	}
+	gs.Bridges -= costClose2
+	spare.AddStation(splitStation, -1, markDirty) // close second ring
+
+	// Spawn a train for the new ring.
+	gs.AvailableTrains--
+	cityCfg := config.Cities[gs.SelectedCity]
+	train := components.NewTrain(gs.TrainIDCounter, spare, cityCfg.TrainCapacity, config.TrainMaxSpeed)
+	gs.AddTrain(train)
+	spare.Trains = append(spare.Trains, train)
+
+	// Step 3: Trim the original line back to stations[0..mid].
+	currentLen := len(bestLoop.Stations)
+	for currentLen > mid+1 {
+		tail := bestLoop.Stations[len(bestLoop.Stations)-1]
+		bestLoop.RemoveEndStation(tail, markDirty)
+		clampTrainIndices(bestLoop)
+		currentLen = len(bestLoop.Stations)
+	}
+
+	// Step 4: Close the first ring back to stations[0].
+	gs.Bridges -= costClose1
+	bestLoop.AddStation(bestLoop.Stations[0], -1, markDirty)
+
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -582,8 +1002,10 @@ func (s *Solver) tryUpgradeInterchange(gs *state.GameState) bool {
 // Line selection helpers
 // ---------------------------------------------------------------------------
 
-// bestLineForStation finds the best active line to extend to station, evaluating
-// both prepend and append positions and scoring by line hygiene.
+// bestLineForStation finds the best active line to extend to station. For open
+// lines it evaluates prepend and append; for closed loops it evaluates all
+// interior insertion positions (matching the original game mechanic where you
+// drag a station onto any segment of a loop).
 func (s *Solver) bestLineForStation(gs *state.GameState, station *components.Station) (*components.Line, int, bool) {
 	type candidate struct {
 		line  *components.Line
@@ -601,10 +1023,6 @@ func (s *Solver) bestLineForStation(gs *state.GameState, station *components.Sta
 		if n == 0 {
 			continue
 		}
-		// Skip closed loops (cannot be extended).
-		if line.Stations[0] == line.Stations[n-1] {
-			continue
-		}
 		// Check if station is already on the line.
 		alreadyOn := false
 		for _, ls := range line.Stations {
@@ -617,26 +1035,75 @@ func (s *Solver) bestLineForStation(gs *state.GameState, station *components.Sta
 			continue
 		}
 
-		// Evaluate prepend (idx=0) and append (idx=-1).
-		for _, insertIdx := range []int{0, -1} {
-			var neighbor *components.Station
-			if insertIdx == 0 {
-				neighbor = line.Stations[0]
-			} else {
-				neighbor = line.Stations[n-1]
+		isLoop := n >= 3 && line.Stations[0] == line.Stations[n-1]
+		covered := make(map[config.StationType]bool)
+		for _, ls := range line.Stations {
+			covered[ls.Type] = true
+		}
+		typeCoverage := 0.0
+		if !covered[station.Type] {
+			typeCoverage = 40.0
+		}
+		demand := s.demandMatchScore(line, station)
+		urgency := station.OvercrowdProgress * 0.02
+
+		// Penalty that grows quadratically with line length, discouraging
+		// piling more stations onto already-large lines.
+		lengthPenalty := math.Max(0, float64(n-3)) * math.Max(0, float64(n-3)) * 1.5
+
+		if isLoop {
+			// For loops, try every interior segment as the insertion point.
+			// Real stations are indices 0..n-2; stations[n-1] == stations[0].
+			for pos := 1; pos < n; pos++ {
+				prev := line.Stations[pos-1]
+				next := line.Stations[pos] // pos == n-1 means next == stations[0]
+				// Net bridge cost: new crossings minus the crossing we eliminate.
+				netCost := s.riverCost(gs, prev, station) + s.riverCost(gs, station, next) - s.riverCost(gs, prev, next)
+				if netCost < 0 {
+					netCost = 0
+				}
+				if gs.Bridges < netCost {
+					continue
+				}
+				detour := math.Hypot(prev.X-station.X, prev.Y-station.Y) +
+					math.Hypot(station.X-next.X, station.Y-next.Y) -
+					math.Hypot(prev.X-next.X, prev.Y-next.Y)
+				hs := 0.0
+				if !covered[station.Type] {
+					hs = 30.0
+				}
+				// Penalise sharp turns at the insertion point: prefer soft curves.
+				turnPenalty := s.insertionTurnPenalty(prev, station, next)
+				score := hs + demand + typeCoverage - detour*0.008 + urgency - lengthPenalty - turnPenalty
+				candidates = append(candidates, candidate{line, pos, score})
 			}
-			cost := s.riverCost(gs, neighbor, station)
-			if gs.Bridges < cost {
-				continue
+		} else {
+			// Open line: evaluate prepend (idx=0) and append (idx=-1).
+			for _, insertIdx := range []int{0, -1} {
+				var neighbor *components.Station
+				if insertIdx == 0 {
+					neighbor = line.Stations[0]
+				} else {
+					neighbor = line.Stations[n-1]
+				}
+				cost := s.riverCost(gs, neighbor, station)
+				if gs.Bridges < cost {
+					continue
+				}
+				hs := s.hygieneScore(line, station, insertIdx)
+				dist := math.Hypot(station.X-neighbor.X, station.Y-neighbor.Y)
+				// Penalise the turn angle created at the current endpoint when
+				// extending the line. A straight or obtuse continuation incurs
+				// no penalty; a sharp bend is discouraged.
+				turnPenalty := 0.0
+				if insertIdx == -1 && n >= 2 {
+					turnPenalty = s.insertionTurnPenalty(line.Stations[n-2], neighbor, station)
+				} else if insertIdx == 0 && n >= 2 {
+					turnPenalty = s.insertionTurnPenalty(station, neighbor, line.Stations[1])
+				}
+				score := hs + demand + typeCoverage - dist*0.008 + urgency - lengthPenalty - turnPenalty
+				candidates = append(candidates, candidate{line, insertIdx, score})
 			}
-			hs := s.hygieneScore(line, station, insertIdx)
-			dist := math.Hypot(station.X-neighbor.X, station.Y-neighbor.Y)
-			// Bonus when the line already serves destinations that passengers at station need.
-			demand := s.demandMatchScore(line, station)
-			// Weight station urgency so crowded stations get connected first.
-			urgency := station.OvercrowdProgress * 0.02
-			score := hs + demand - dist*0.01 + urgency
-			candidates = append(candidates, candidate{line, insertIdx, score})
 		}
 	}
 
@@ -691,19 +1158,34 @@ func (s *Solver) hygieneScore(line *components.Line, newStation *components.Stat
 	return score
 }
 
-// attachStation adds station to line at insertIdx, paying bridge cost and
-// auto-spawning a train if the line just became active.
+// attachStation adds station to line at insertIdx, paying the correct bridge
+// cost and auto-spawning a train if the line just became active.
+//
+// For open lines insertIdx must be 0 (prepend) or -1 (append).
+// For closed loops insertIdx is an interior position (1 ≤ idx < n); the net
+// bridge cost accounts for the two new segments and the removed segment.
 func (s *Solver) attachStation(gs *state.GameState, line *components.Line, station *components.Station, insertIdx int) {
 	n := len(line.Stations)
-	var neighbor *components.Station
-	if insertIdx == 0 && n > 0 {
-		neighbor = line.Stations[0]
-	} else if n > 0 {
-		neighbor = line.Stations[n-1]
-	}
-	if neighbor != nil {
-		cost := s.riverCost(gs, neighbor, station)
-		gs.Bridges -= cost
+	isLoop := n >= 3 && line.Stations[0] == line.Stations[n-1]
+
+	if isLoop && insertIdx > 0 && insertIdx < n {
+		prev := line.Stations[insertIdx-1]
+		next := line.Stations[insertIdx]
+		netCost := s.riverCost(gs, prev, station) + s.riverCost(gs, station, next) - s.riverCost(gs, prev, next)
+		if netCost > 0 {
+			gs.Bridges -= netCost
+		}
+	} else {
+		var neighbor *components.Station
+		if insertIdx == 0 && n > 0 {
+			neighbor = line.Stations[0]
+		} else if n > 0 {
+			neighbor = line.Stations[n-1]
+		}
+		if neighbor != nil {
+			cost := s.riverCost(gs, neighbor, station)
+			gs.Bridges -= cost
+		}
 	}
 
 	wasActive := line.Active
@@ -773,6 +1255,33 @@ func (s *Solver) firstSpareLine(gs *state.GameState) *components.Line {
 	return nil
 }
 
+// avgLineArcLength returns the mean geographic arc length (sum of segment
+// distances) across all active lines. Used to gauge how stretched the current
+// network is when scoring the new-line upgrade.
+func (s *Solver) avgLineArcLength(gs *state.GameState) float64 {
+	total := 0.0
+	count := 0
+	for i := 0; i < gs.AvailableLines && i < len(gs.Lines); i++ {
+		l := gs.Lines[i]
+		if !l.Active || l.MarkedForDeletion {
+			continue
+		}
+		arc := 0.0
+		for j := 0; j < len(l.Stations)-1; j++ {
+			a, b := l.Stations[j], l.Stations[j+1]
+			if a != b {
+				arc += math.Hypot(b.X-a.X, b.Y-a.Y)
+			}
+		}
+		total += arc
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return total / float64(count)
+}
+
 func (s *Solver) passengerLoadOnLine(gs *state.GameState, line *components.Line) int {
 	load := 0
 	for _, st := range line.Stations {
@@ -802,5 +1311,147 @@ func (s *Solver) demandMatchScore(line *components.Line, station *components.Sta
 		}
 	}
 	return score
+}
+
+// ---------------------------------------------------------------------------
+// Circle-cluster detection and Titan Line
+// ---------------------------------------------------------------------------
+
+// detectCircleClusters scans the map for areas dense with Circle-type stations.
+// For each cluster of at least minCount circles within radius pixels, it returns
+// the most overcrowded station in that cluster as the representative hub.
+//
+// Complexity: O(n²) on circle count, acceptable for n < 50.
+func (s *Solver) detectCircleClusters(gs *state.GameState, radius float64, minCount int) []*components.Station {
+	var circles []*components.Station
+	for _, st := range gs.Stations {
+		if st.Type == config.Circle {
+			circles = append(circles, st)
+		}
+	}
+
+	visited := make(map[*components.Station]bool)
+	var hubs []*components.Station
+
+	for _, c := range circles {
+		if visited[c] {
+			continue
+		}
+		var cluster []*components.Station
+		for _, other := range circles {
+			if !visited[other] && math.Hypot(other.X-c.X, other.Y-c.Y) <= radius {
+				cluster = append(cluster, other)
+			}
+		}
+		if len(cluster) < minCount {
+			continue
+		}
+		for _, st := range cluster {
+			visited[st] = true
+		}
+		// Representative = most overcrowded station in the cluster.
+		best := cluster[0]
+		for _, st := range cluster[1:] {
+			if st.OvercrowdProgress > best.OvercrowdProgress {
+				best = st
+			}
+		}
+		hubs = append(hubs, best)
+	}
+	return hubs
+}
+
+// tryTitanLine deploys a short, high-capacity line connecting a circle-cluster
+// hub to the nearest non-circle station. It acts as a dedicated drain that
+// prevents circle stations from cascading into game-over.
+func (s *Solver) tryTitanLine(gs *state.GameState, hub *components.Station) bool {
+	spare := s.firstSpareLine(gs)
+	if spare == nil || gs.AvailableTrains == 0 {
+		return false
+	}
+
+	// Nearest non-circle station.
+	var dest *components.Station
+	bestDist := math.MaxFloat64
+	for _, st := range gs.Stations {
+		if st.Type == config.Circle || st == hub {
+			continue
+		}
+		d := math.Hypot(st.X-hub.X, st.Y-hub.Y)
+		if d < bestDist {
+			bestDist = d
+			dest = st
+		}
+	}
+	if dest == nil {
+		return false
+	}
+
+	cost := s.riverCost(gs, hub, dest)
+	if gs.Bridges < cost {
+		return false
+	}
+	gs.Bridges -= cost
+
+	markDirty := func() { gs.GraphDirty = true }
+	spare.AddStation(hub, -1, markDirty)
+	spare.AddStation(dest, -1, markDirty)
+
+	gs.AvailableTrains--
+	cityCfg := config.Cities[gs.SelectedCity]
+	train := components.NewTrain(gs.TrainIDCounter, spare, cityCfg.TrainCapacity, config.TrainMaxSpeed)
+	gs.AddTrain(train)
+	spare.Trains = append(spare.Trains, train)
+	return true
+}
+
+// ---------------------------------------------------------------------------
+// Centrality-based preemptive interchange
+// ---------------------------------------------------------------------------
+
+// tryUpgradeCentralNode upgrades the highest-centrality non-interchange station
+// that is also a junction (served by ≥ 2 lines) and has at least moderate
+// overcrowding. This places interchanges at network bottlenecks before they
+// become critical.
+func (s *Solver) tryUpgradeCentralNode(gs *state.GameState) bool {
+	if gs.Interchanges == 0 || s.centrality == nil {
+		return false
+	}
+
+	const minCentrality = 0.05 // only act on genuinely important junctions
+	const minOvercrowdFraction = 0.3
+
+	var best *components.Station
+	bestScore := -math.MaxFloat64
+
+	for _, st := range gs.Stations {
+		if st.IsInterchange {
+			continue
+		}
+		c, ok := s.centrality[st]
+		if !ok || c < minCentrality {
+			continue
+		}
+		lines := s.linesThroughStation(gs, st)
+		if len(lines) < 2 {
+			continue
+		}
+		overcrowdFraction := st.OvercrowdProgress / float64(config.OvercrowdTime)
+		if overcrowdFraction < minOvercrowdFraction {
+			continue
+		}
+		score := c*10 + overcrowdFraction*5 + float64(len(lines))*2
+		if score > bestScore {
+			bestScore = score
+			best = st
+		}
+	}
+
+	if best == nil {
+		return false
+	}
+	best.IsInterchange = true
+	gs.Interchanges--
+	return true
 }
 
