@@ -1,11 +1,12 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"minimetro-go/rendering"
+	"minimetro-go/rl"
 	"minimetro-go/state"
 	"minimetro-go/systems"
-
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -18,6 +19,7 @@ type MinimetroGame struct {
 	UI           *systems.UI
 	InputHandler *systems.InputHandler
 	Solver       *systems.Solver
+	RLClient     *rl.Client // non-nil when --rl-client flag is set
 	screenW      int
 	screenH      int
 }
@@ -63,7 +65,10 @@ func (m *MinimetroGame) Update() error {
 		if result == "show_upgrades" {
 			log.Printf("[Game] Week %d complete — showing upgrade modal", m.GameState.Week)
 			m.UI.UpgradeChoices = m.GameSystem.GenerateUpgradeChoices(m.GameState)
-			if m.Solver.Enabled {
+			if m.RLClient != nil {
+				// RL agent chooses upgrade; no modal shown.
+				m.RLClient.Update(m.GameState, m.GameSystem, m.GameState.SimTimeMs, m.UI.UpgradeChoices)
+			} else if m.Solver.Enabled {
 				chosen := m.Solver.ChooseUpgrade(m.GameState, m.UI.UpgradeChoices)
 				systems.ApplyUpgrade(m.GameState, chosen)
 			} else {
@@ -75,7 +80,11 @@ func (m *MinimetroGame) Update() error {
 			m.UI.ShowGameOverModal = true
 		}
 
-		m.Solver.Update(m.GameState, m.GameSystem.GraphManager, m.GameState.SimTimeMs)
+		if m.RLClient != nil {
+			m.RLClient.Update(m.GameState, m.GameSystem, m.GameState.SimTimeMs, nil)
+		} else {
+			m.Solver.Update(m.GameState, m.GameSystem.GraphManager, m.GameState.SimTimeMs)
+		}
 	}
 
 	return nil
@@ -95,6 +104,9 @@ func (m *MinimetroGame) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
+	rlClientURL := flag.String("rl-client", "", "if set, use the RL agent at this inference server URL (e.g. http://localhost:9000)")
+	flag.Parse()
+
 	ebiten.SetWindowSize(1200, 800)
 	ebiten.SetWindowTitle("Mini Metro - Go Edition")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
@@ -111,6 +123,12 @@ func main() {
 		UI:           ui,
 		InputHandler: ih,
 		Solver:       solver,
+	}
+
+	if *rlClientURL != "" {
+		log.Printf("[main] RL client mode enabled — inference server: %s", *rlClientURL)
+		g.RLClient = rl.NewClient(*rlClientURL)
+		g.Solver.Enabled = false // RL agent takes over
 	}
 
 	if err := ebiten.RunGame(g); err != nil {

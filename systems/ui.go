@@ -328,24 +328,6 @@ func (ui *UI) upgradeCardRects() (float64, float64, float64, float64, float64, f
 	return modX + 20, modY + 115, modX + 300, modY + 115, cardW, cardH
 }
 
-func applyUpgrade(gs *state.GameState, choice string) {
-	switch choice {
-	case UpgradeNewLine:
-		if gs.AvailableLines < gs.MaxLines {
-			gs.AvailableLines++
-		}
-	case UpgradeCarriage:
-		gs.Carriages++
-	case UpgradeBridge:
-		gs.Bridges += 2
-	case UpgradeInterchange:
-		gs.Interchanges++
-	}
-}
-
-// ApplyUpgrade is the exported version for use by the Solver.
-func ApplyUpgrade(gs *state.GameState, choice string) { applyUpgrade(gs, choice) }
-
 func (ui *UI) drawUpgradeModal(screen *ebiten.Image, gs *state.GameState) {
 	if len(ui.UpgradeChoices) < 2 {
 		return

@@ -322,6 +322,12 @@ func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
 	return false
 }
 
+// ApplyPerturbation is the exported entry point for topology mutations used by
+// the RL environment. It delegates to the internal applyPerturbation helper.
+func ApplyPerturbation(gs *state.GameState, p *Perturbation) bool {
+	return applyPerturbation(gs, p)
+}
+
 // clampTrainIndices ensures that all trains on line have CurrentStationIndex
 // and NextStationIndex within the current station slice bounds. Called after
 // any operation that reduces the number of stations on a line.
