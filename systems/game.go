@@ -170,20 +170,20 @@ func (g *Game) updateSpawning(gs *state.GameState, screenWidth, screenHeight, no
 
 func (g *Game) updateOvercrowding(gs *state.GameState, deltaTime float64) {
 	cityCfg := config.Cities[gs.SelectedCity]
+
+	// Pre-compute the set of stations with an incoming moving train (grace period).
+	// O(T) once instead of O(S×T) via an inner loop per station.
+	gracedStations := make(map[*components.Station]bool, len(gs.Trains))
+	for _, t := range gs.Trains {
+		if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving &&
+			t.NextStationIndex < len(t.Line.Stations) {
+			gracedStations[t.Line.Stations[t.NextStationIndex]] = true
+		}
+	}
+
 	for _, s := range gs.Stations {
 		cap := s.Capacity(cityCfg.StationCapacity)
-
-		isGrace := false
-		for _, t := range gs.Trains {
-			if t.Line.Active && len(t.Line.Stations) > 1 && t.NextStationIndex < len(t.Line.Stations) {
-				nextStation := t.Line.Stations[t.NextStationIndex]
-				if nextStation == s && t.State == components.TrainMoving {
-					isGrace = true
-					break
-				}
-			}
-		}
-		s.OvercrowdIsGrace = isGrace
+		s.OvercrowdIsGrace = gracedStations[s]
 
 		if len(s.Passengers) > cap {
 			s.OvercrowdProgress += deltaTime * gs.Speed
@@ -205,23 +205,29 @@ func (g *Game) updatePassengerReservations(gs *state.GameState, nowMs float64) {
 		p.ReservedTrain = nil
 	}
 
+	// Pre-compute: station → trains arriving next tick.
+	// Reduces the per-passenger train scan from O(T) to O(1) lookup.
+	incomingTrains := make(map[*components.Station][]*components.Train, len(gs.Stations))
+	for _, t := range gs.Trains {
+		if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving &&
+			t.NextStationIndex < len(t.Line.Stations) {
+			nextSt := t.Line.Stations[t.NextStationIndex]
+			incomingTrains[nextSt] = append(incomingTrains[nextSt], t)
+		}
+	}
+
 	for _, p := range gs.Passengers {
 		if p.CurrentStation == nil {
 			continue
 		}
 
 		var bestTrain *components.Train
-		for _, t := range gs.Trains {
-			if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving &&
-				t.NextStationIndex < len(t.Line.Stations) {
-				if t.Line.Stations[t.NextStationIndex] == p.CurrentStation {
-					if t.TotalCapacity()-len(t.Passengers)-t.ReservedSeats > 0 {
-						upcoming := t.GetUpcomingStops(p.CurrentStation, true)
-						if canBoard(g.GraphManager, gs, p, upcoming, nowMs) {
-							bestTrain = t
-							break
-						}
-					}
+		for _, t := range incomingTrains[p.CurrentStation] {
+			if t.TotalCapacity()-len(t.Passengers)-t.ReservedSeats > 0 {
+				upcoming := t.GetUpcomingStops(p.CurrentStation, true)
+				if canBoard(g.GraphManager, gs, p, upcoming, nowMs) {
+					bestTrain = t
+					break
 				}
 			}
 		}

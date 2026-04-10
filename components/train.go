@@ -67,12 +67,11 @@ func (t *Train) TotalCapacity() int {
 }
 
 func (t *Train) GetUpcomingStops(currentStation *Station, singleDirectionOnly bool) []*Station {
-	upcoming := make(map[*Station]bool)
 	lineStations := t.Line.Stations
 	numStations := len(lineStations)
 	isLoop := t.IsLoop()
 	if isLoop {
-		numStations--
+		numStations-- // exclude the loop-closure duplicate
 	}
 
 	if numStations <= 1 {
@@ -81,46 +80,55 @@ func (t *Train) GetUpcomingStops(currentStation *Station, singleDirectionOnly bo
 
 	currentIndex := t.CurrentStationIndex
 
-	currentDirection := t.Direction
-	if !isLoop {
-		if currentIndex == 0 {
-			currentDirection = 1
+	if isLoop {
+		// Circular iteration produces unique stations — no map needed.
+		result := make([]*Station, 0, numStations-1)
+		for i := 1; i < numStations; i++ {
+			result = append(result, lineStations[(currentIndex+i)%numStations])
 		}
-		if currentIndex >= len(lineStations)-1 {
-			currentDirection = -1
-		}
+		return result
 	}
 
-	if isLoop {
-		for i := 1; i < numStations; i++ {
-			index := (currentIndex + i) % numStations
-			upcoming[lineStations[index]] = true
+	currentDirection := t.Direction
+	if currentIndex == 0 {
+		currentDirection = 1
+	} else if currentIndex >= len(lineStations)-1 {
+		currentDirection = -1
+	}
+
+	if singleDirectionOnly {
+		// Zero-allocation fast path: return a sub-slice of the line's station list.
+		// Callers only read this slice and use it within the same update tick.
+		if currentDirection == 1 {
+			if currentIndex+1 >= len(lineStations) {
+				return nil
+			}
+			return lineStations[currentIndex+1:]
+		}
+		if currentIndex <= 0 {
+			return nil
+		}
+		return lineStations[:currentIndex]
+	}
+
+	// singleDirectionOnly=false: union of both directional sets; dedup required.
+	upcoming := make(map[*Station]bool)
+	if currentDirection == 1 {
+		for i := currentIndex + 1; i < len(lineStations); i++ {
+			upcoming[lineStations[i]] = true
+		}
+		for i := len(lineStations) - 2; i >= 0; i-- {
+			upcoming[lineStations[i]] = true
 		}
 	} else {
-		if currentDirection == 1 {
-			for i := currentIndex + 1; i < len(lineStations); i++ {
-				upcoming[lineStations[i]] = true
-			}
-		} else {
-			for i := currentIndex - 1; i >= 0; i-- {
-				upcoming[lineStations[i]] = true
-			}
+		for i := currentIndex - 1; i >= 0; i-- {
+			upcoming[lineStations[i]] = true
 		}
-
-		if !singleDirectionOnly {
-			if currentDirection == 1 {
-				for i := len(lineStations) - 2; i >= 0; i-- {
-					upcoming[lineStations[i]] = true
-				}
-			} else {
-				for i := 1; i < len(lineStations); i++ {
-					upcoming[lineStations[i]] = true
-				}
-			}
+		for i := 1; i < len(lineStations); i++ {
+			upcoming[lineStations[i]] = true
 		}
 	}
-
-	var result []*Station
+	result := make([]*Station, 0, len(upcoming))
 	for s := range upcoming {
 		result = append(result, s)
 	}

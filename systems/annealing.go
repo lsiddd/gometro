@@ -215,9 +215,17 @@ func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
 
 	markDirty := func() { gs.GraphDirty = true }
 
+	// Build a single ID→Station index up front so each lookup below is O(1)
+	// rather than a separate linear scan.
+	stIdx := make(map[int]*components.Station, len(gs.Stations))
+	for _, s := range gs.Stations {
+		stIdx[s.ID] = s
+	}
+	stByID := func(id int) *components.Station { return stIdx[id] }
+
 	switch p.Type {
 	case PerturbAddEndpoint:
-		st := stationByID(gs, p.StationID)
+		st := stByID(p.StationID)
 		if st == nil {
 			return false
 		}
@@ -228,7 +236,7 @@ func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
 		return line.AddStation(st, insertIdx, markDirty)
 
 	case PerturbRemoveEndpoint:
-		st := stationByID(gs, p.StationID)
+		st := stByID(p.StationID)
 		if st == nil {
 			return false
 		}
@@ -250,8 +258,8 @@ func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
 		return line.AddStation(line.Stations[0], -1, markDirty)
 
 	case PerturbSwapEndpoint:
-		st := stationByID(gs, p.StationID)
-		newSt := stationByID(gs, p.NewStationID)
+		st := stByID(p.StationID)
+		newSt := stByID(p.NewStationID)
 		if st == nil || newSt == nil {
 			return false
 		}
@@ -279,7 +287,7 @@ func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
 		return true
 
 	case PerturbInsertIntoLoop:
-		st := stationByID(gs, p.StationID)
+		st := stByID(p.StationID)
 		if st == nil {
 			return false
 		}
@@ -333,12 +341,3 @@ func clampTrainIndices(line *components.Line) {
 	}
 }
 
-// stationByID finds a station in gs by its ID.
-func stationByID(gs *state.GameState, id int) *components.Station {
-	for _, s := range gs.Stations {
-		if s.ID == id {
-			return s
-		}
-	}
-	return nil
-}

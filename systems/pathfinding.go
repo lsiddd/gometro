@@ -67,7 +67,9 @@ func (gm *GraphManager) buildGraph(gameState *state.GameState) map[*components.S
 	return graph
 }
 
-// Simple BFS that prioritizes fewer transfers (simplified from A* for Go without heavy heap deps)
+// Simple BFS that prioritizes fewer transfers (simplified from A* for Go without heavy heap deps).
+// Path reconstruction uses parent pointers rather than copying the path slice at every BFS
+// expansion, reducing allocations from O(nodes×depth) to O(nodes).
 func FindPath(gm *GraphManager, gameState *state.GameState, startStation *components.Station, destinationType config.StationType) []*components.Station {
 	if startStation == nil {
 		return nil
@@ -80,22 +82,20 @@ func FindPath(gm *GraphManager, gameState *state.GameState, startStation *compon
 
 	type State struct {
 		Station   *components.Station
-		Path      []*components.Station
+		Depth     int // path length from start (startStation = 1)
 		Transfers int
 		LastLine  *components.Line
 	}
 
-	queue := []State{{
-		Station:   startStation,
-		Path:      []*components.Station{startStation},
-		Transfers: 0,
-		LastLine:  nil,
-	}}
+	n := len(gameState.Stations)
+	queue := make([]State, 0, n)
+	queue = append(queue, State{Station: startStation, Depth: 1, Transfers: 0, LastLine: nil})
 
-	visited := make(map[*components.Station]float64) // keep track of min score to this station
+	visited := make(map[*components.Station]float64, n)
+	parent := make(map[*components.Station]*components.Station, n)
 	visited[startStation] = 0
 
-	var bestPath []*components.Station
+	var bestEnd *components.Station
 	bestScore := float64(999999)
 
 	for len(queue) > 0 {
@@ -103,10 +103,10 @@ func FindPath(gm *GraphManager, gameState *state.GameState, startStation *compon
 		queue = queue[1:]
 
 		if curr.Station.Type == destinationType {
-			score := float64(len(curr.Path)) + float64(curr.Transfers)*config.TransferPenalty
+			score := float64(curr.Depth) + float64(curr.Transfers)*config.TransferPenalty
 			if score < bestScore {
 				bestScore = score
-				bestPath = curr.Path
+				bestEnd = curr.Station
 			}
 			continue
 		}
@@ -120,23 +120,19 @@ func FindPath(gm *GraphManager, gameState *state.GameState, startStation *compon
 				newTransfers++
 			}
 
-			score := float64(len(curr.Path)) + float64(newTransfers)*config.TransferPenalty
+			newDepth := curr.Depth + 1
+			score := float64(newDepth) + float64(newTransfers)*config.TransferPenalty
 			if neighbor.OvercrowdProgress > 0 && neighbor.Type != destinationType {
 				score += (neighbor.OvercrowdProgress / config.OvercrowdTime) * config.OvercrowdScoreFactor
 			}
 
-			// Limit path length to 20 to prevent runaway BFS in complex cyclic graphs
-			if prevScore, ok := visited[neighbor]; !ok || prevScore > score || (prevScore == score && len(curr.Path) < 20) {
+			// Limit path length to 20 to prevent runaway BFS in complex cyclic graphs.
+			if prevScore, ok := visited[neighbor]; !ok || prevScore > score || (prevScore == score && newDepth < 20) {
 				visited[neighbor] = score
-				
-				// Capacity is important to cap memory allocs when branching
-				newPath := make([]*components.Station, len(curr.Path), len(curr.Path) + 1)
-				copy(newPath, curr.Path)
-				newPath = append(newPath, neighbor)
-
+				parent[neighbor] = curr.Station
 				queue = append(queue, State{
 					Station:   neighbor,
-					Path:      newPath,
+					Depth:     newDepth,
 					Transfers: newTransfers,
 					LastLine:  line,
 				})
@@ -144,5 +140,22 @@ func FindPath(gm *GraphManager, gameState *state.GameState, startStation *compon
 		}
 	}
 
-	return bestPath
+	if bestEnd == nil {
+		return nil
+	}
+
+	// Reconstruct path by backtracking through parent pointers, then reverse.
+	var path []*components.Station
+	for s := bestEnd; s != startStation; s = parent[s] {
+		path = append(path, s)
+		if parent[s] == nil {
+			// Disconnected parent chain — should not happen in a valid graph.
+			return nil
+		}
+	}
+	path = append(path, startStation)
+	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
+		path[i], path[j] = path[j], path[i]
+	}
+	return path
 }
