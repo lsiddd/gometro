@@ -1,8 +1,11 @@
 package state
 
 import (
+	"fmt"
+	"math"
 	"minimetro-go/components"
 	"minimetro-go/config"
+	"reflect"
 	"testing"
 )
 
@@ -296,4 +299,93 @@ func TestDeepCopy_DummyLineOnTrainIsPreserved(t *testing.T) {
 	if cp.Trains[0].Line == train.Line {
 		t.Error("copy train.Line points to original dummy — not deep-copied")
 	}
+}
+
+// ── reflection completeness ───────────────────────────────────────────────────
+
+// TestDeepCopy_AllScalarFieldsCopied uses reflection to verify that every
+// scalar field added to GameState is present in DeepCopy. This test will fail
+// if someone adds a new field to GameState and forgets to copy it.
+//
+// Fields intentionally overridden by DeepCopy (not equal to source) are listed
+// in deepCopyOverrides below. Add a new entry there when DeepCopy deliberately
+// sets a field to a value other than the source.
+func TestDeepCopy_AllScalarFieldsCopied(t *testing.T) {
+	// Fields that DeepCopy intentionally overrides.
+	deepCopyOverrides := map[string]any{
+		"Paused":               false,
+		"SpawnStationsEnabled": false,
+		"FastForward":          0,
+		"GraphDirty":           true,
+	}
+
+	gs := NewGameState()
+
+	// Populate every scalar field with a distinctive non-zero value so a missed
+	// copy produces a clear diff rather than a false-pass on zero values.
+	rv := reflect.ValueOf(gs).Elem()
+	rt := rv.Type()
+	for i := 0; i < rt.NumField(); i++ {
+		fv := rv.Field(i)
+		ft := rt.Field(i)
+		if _, overridden := deepCopyOverrides[ft.Name]; overridden {
+			continue // DeepCopy deliberately changes these; don't set them here.
+		}
+		switch fv.Kind() {
+		case reflect.Bool:
+			fv.SetBool(true)
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			fv.SetInt(int64(i + 1))
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			fv.SetUint(uint64(i + 1))
+		case reflect.Float32, reflect.Float64:
+			fv.SetFloat(math.Pi * float64(i+1))
+		case reflect.String:
+			fv.SetString(fmt.Sprintf("field_%s", ft.Name))
+		// Slices and pointers are set up by buildTestState / NewGameState; skip here.
+		}
+	}
+
+	cp := gs.DeepCopy()
+	cpv := reflect.ValueOf(cp).Elem()
+
+	var failures []string
+	for i := 0; i < rt.NumField(); i++ {
+		ft := rt.Field(i)
+		fv := rv.Field(i)
+
+		// Only check scalar kinds — slice/pointer remapping is tested by the
+		// structural tests above.
+		switch fv.Kind() {
+		case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64, reflect.String:
+		default:
+			continue
+		}
+
+		want := fv.Interface()
+		if exp, overridden := deepCopyOverrides[ft.Name]; overridden {
+			want = exp
+		}
+		got := cpv.Field(i).Interface()
+		if !reflect.DeepEqual(got, want) {
+			failures = append(failures, fmt.Sprintf(
+				"  GameState.%s: want %v got %v — add it to DeepCopy or to deepCopyOverrides",
+				ft.Name, want, got,
+			))
+		}
+	}
+
+	if len(failures) > 0 {
+		t.Errorf("DeepCopy missed %d scalar field(s):\n%s", len(failures), joinLines(failures))
+	}
+}
+
+func joinLines(ss []string) string {
+	out := ""
+	for _, s := range ss {
+		out += s + "\n"
+	}
+	return out
 }

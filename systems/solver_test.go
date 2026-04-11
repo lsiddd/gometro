@@ -3,6 +3,7 @@ package systems
 import (
 	"minimetro-go/components"
 	"minimetro-go/config"
+	"minimetro-go/systems/graph"
 	"testing"
 )
 
@@ -636,8 +637,8 @@ func TestSolver_TryUpgradeCentralNode_UpgradesHighCentralityJunction(t *testing.
 	// Set moderate overcrowding on the hub.
 	hub.OvercrowdProgress = float64(config.OvercrowdTime) * 0.4
 
-	gm := NewGraphManager()
-	s.centrality = BetweennessCentrality(gs, gm)
+	gm := graph.NewGraphManager()
+	s.centrality = graph.BetweennessCentrality(gs, gm)
 
 	if !s.tryUpgradeCentralNode(gs) {
 		t.Fatal("should upgrade high-centrality junction with moderate overcrowding")
@@ -669,8 +670,8 @@ func TestSolver_TryUpgradeCentralNode_SkipsAlreadyUpgraded(t *testing.T) {
 	gs.Interchanges = 1
 	hub.OvercrowdProgress = float64(config.OvercrowdTime) * 0.9
 
-	gm := NewGraphManager()
-	s.centrality = BetweennessCentrality(gs, gm)
+	gm := graph.NewGraphManager()
+	s.centrality = graph.BetweennessCentrality(gs, gm)
 
 	if s.tryUpgradeCentralNode(gs) {
 		t.Error("should not upgrade a station already marked as interchange")

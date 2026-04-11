@@ -7,17 +7,18 @@ import (
 	"minimetro-go/components"
 	"minimetro-go/config"
 	"minimetro-go/state"
+	"minimetro-go/systems/graph"
 )
 
 type Game struct {
 	Initialized  bool
-	GraphManager *GraphManager
+	GraphManager *graph.GraphManager
 }
 
 func NewGame() *Game {
 	return &Game{
 		Initialized:  false,
-		GraphManager: NewGraphManager(),
+		GraphManager: graph.NewGraphManager(),
 	}
 }
 
@@ -244,7 +245,7 @@ func (g *Game) updatePassengerReservations(gs *state.GameState, nowMs float64) {
 		waitedTooLong := nowMs-p.WaitStartTime > config.PassengerWaitPatience && cooldownElapsed
 
 		if (overcrowded && cooldownElapsed) || waitedTooLong {
-			p.Path = FindPath(g.GraphManager, gs, p.CurrentStation, p.Destination)
+			p.Path = graph.FindPath(g.GraphManager, gs, p.CurrentStation, p.Destination)
 			p.PathIndex = 1
 			p.LastRouteCalculation = nowMs
 		}
@@ -577,7 +578,7 @@ func (g *Game) shouldAlightPassenger(t *components.Train, p *components.Passenge
 	return false
 }
 
-func canBoard(gm *GraphManager, gs *state.GameState, p *components.Passenger, upcomingStops []*components.Station, nowMs float64) bool {
+func canBoard(gm *graph.GraphManager, gs *state.GameState, p *components.Passenger, upcomingStops []*components.Station, nowMs float64) bool {
 	// A passenger should board any train that visits a station matching their destination
 	// type, regardless of which specific station their cached path was computed for.
 	for _, u := range upcomingStops {
@@ -587,7 +588,7 @@ func canBoard(gm *GraphManager, gs *state.GameState, p *components.Passenger, up
 	}
 
 	if p.Path == nil || p.PathIndex >= len(p.Path) {
-		p.Path = FindPath(gm, gs, p.CurrentStation, p.Destination)
+		p.Path = graph.FindPath(gm, gs, p.CurrentStation, p.Destination)
 		p.PathIndex = 1
 		p.LastRouteCalculation = nowMs
 		if p.Path == nil {
@@ -624,7 +625,7 @@ func (g *Game) SpawnPassenger(gs *state.GameState, nowMs float64) {
 		}
 		dest := list[rand.Intn(len(list))]
 		passenger := components.NewPassenger(station, dest, nowMs)
-		passenger.Path = FindPath(g.GraphManager, gs, station, dest)
+		passenger.Path = graph.FindPath(g.GraphManager, gs, station, dest)
 		passenger.PathIndex = 1
 		station.AddPassenger(passenger, nowMs)
 		gs.AddPassenger(passenger)

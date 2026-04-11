@@ -20,6 +20,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import numpy as np
 from sb3_contrib import MaskablePPO
 
+from models import MetroFeatureExtractor
+
 
 class InferenceHandler(BaseHTTPRequestHandler):
     """HTTP handler that wraps a loaded PPO policy."""
@@ -38,9 +40,9 @@ class InferenceHandler(BaseHTTPRequestHandler):
         mask = np.array(body["mask"], dtype=bool).reshape(1, -1)
 
         action, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
-        action_int = int(action[0])
+        action_array = action[0].tolist()
 
-        resp = json.dumps({"action": action_int}).encode()
+        resp = json.dumps({"action": action_array}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(resp)))
@@ -52,7 +54,10 @@ class InferenceHandler(BaseHTTPRequestHandler):
 
 
 def serve(model_path: str, port: int):
-    model = MaskablePPO.load(model_path)
+    # Register MetroFeatureExtractor dynamically if required by load,
+    # though SB3 pickle usually handles it if imported.
+    custom_objects = {"MetroFeatureExtractor": MetroFeatureExtractor}
+    model = MaskablePPO.load(model_path, custom_objects=custom_objects)
     InferenceHandler.model = model
     server = HTTPServer(("localhost", port), InferenceHandler)
     print(f"Inference server ready at http://localhost:{port}/act")

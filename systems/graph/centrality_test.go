@@ -1,4 +1,4 @@
-package systems
+package graph
 
 import (
 	"minimetro-go/components"
@@ -7,10 +7,28 @@ import (
 	"testing"
 )
 
-// buildCentralityState builds a graph and returns a GameState + GraphManager
-// ready for BetweennessCentrality.
+// ── test helpers ──────────────────────────────────────────────────────────────
+
+func graphTestState() *state.GameState {
+	gs := state.NewGameState()
+	gs.SelectedCity = "london"
+	return gs
+}
+
+func graphStation(id int, x, y float64, typ config.StationType) *components.Station {
+	return components.NewStation(id, x, y, typ)
+}
+
+func connectedLine(color string, idx int, stations ...*components.Station) *components.Line {
+	l := components.NewLine(color, idx)
+	for _, s := range stations {
+		l.AddStation(s, -1, nil)
+	}
+	return l
+}
+
 func buildCentralityState(stations []*components.Station, lines ...*components.Line) (*state.GameState, *GraphManager) {
-	gs := newTestGameState()
+	gs := graphTestState()
 	gs.Stations = stations
 	gs.Lines = lines
 	gs.AvailableLines = len(lines)
@@ -21,9 +39,9 @@ func buildCentralityState(stations []*components.Station, lines ...*components.L
 // ── Degenerate cases ─────────────────────────────────────────────────────────
 
 func TestBetweennessCentrality_LessThanThreeNodes_AllZero(t *testing.T) {
-	a := stationAt(0, 0, 0, config.Circle)
-	b := stationAt(1, 100, 0, config.Triangle)
-	line := newConnectedLine(config.LineColors[0], 0, a, b)
+	a := graphStation(0, 0, 0, config.Circle)
+	b := graphStation(1, 100, 0, config.Triangle)
+	line := connectedLine(config.LineColors[0], 0, a, b)
 	line.Active = true
 
 	gs, gm := buildCentralityState([]*components.Station{a, b}, line)
@@ -37,7 +55,7 @@ func TestBetweennessCentrality_LessThanThreeNodes_AllZero(t *testing.T) {
 }
 
 func TestBetweennessCentrality_EmptyGraph_AllZero(t *testing.T) {
-	gs := newTestGameState()
+	gs := graphTestState()
 	gs.Stations = []*components.Station{}
 	gm := NewGraphManager()
 	c := BetweennessCentrality(gs, gm)
@@ -51,10 +69,10 @@ func TestBetweennessCentrality_EmptyGraph_AllZero(t *testing.T) {
 // For a path A–B–C, B lies on all paths between A and C.
 // Its centrality should be strictly higher than A's and C's (which are endpoints).
 func TestBetweennessCentrality_LinearChain_MiddleHighest(t *testing.T) {
-	a := stationAt(0, 0, 0, config.Circle)
-	b := stationAt(1, 100, 0, config.Triangle)
-	c := stationAt(2, 200, 0, config.Square)
-	line := newConnectedLine(config.LineColors[0], 0, a, b, c)
+	a := graphStation(0, 0, 0, config.Circle)
+	b := graphStation(1, 100, 0, config.Triangle)
+	c := graphStation(2, 200, 0, config.Square)
+	line := connectedLine(config.LineColors[0], 0, a, b, c)
 	line.Active = true
 
 	gs, gm := buildCentralityState([]*components.Station{a, b, c}, line)
@@ -71,16 +89,16 @@ func TestBetweennessCentrality_LinearChain_MiddleHighest(t *testing.T) {
 // Hub-and-spoke: B connects A–B and B–C and B–D on separate lines.
 // B is a transfer hub — must have the highest centrality.
 func TestBetweennessCentrality_StarTopology_HubHighest(t *testing.T) {
-	hub := stationAt(0, 200, 200, config.Circle)
-	a := stationAt(1, 0, 200, config.Triangle)
-	b := stationAt(2, 400, 200, config.Square)
-	c := stationAt(3, 200, 0, config.Pentagon)
+	hub := graphStation(0, 200, 200, config.Circle)
+	a := graphStation(1, 0, 200, config.Triangle)
+	b := graphStation(2, 400, 200, config.Square)
+	c := graphStation(3, 200, 0, config.Pentagon)
 
-	line1 := newConnectedLine(config.LineColors[0], 0, a, hub)
+	line1 := connectedLine(config.LineColors[0], 0, a, hub)
 	line1.Active = true
-	line2 := newConnectedLine(config.LineColors[1], 1, hub, b)
+	line2 := connectedLine(config.LineColors[1], 1, hub, b)
 	line2.Active = true
-	line3 := newConnectedLine(config.LineColors[2], 2, hub, c)
+	line3 := connectedLine(config.LineColors[2], 2, hub, c)
 	line3.Active = true
 
 	gs, gm := buildCentralityState(
@@ -101,18 +119,18 @@ func TestBetweennessCentrality_StarTopology_HubHighest(t *testing.T) {
 // On a symmetric 4-node path A–B–C–D, B and C should have equal centrality
 // and both should exceed A and D.
 func TestBetweennessCentrality_SymmetricPath_InnerNodesEqual(t *testing.T) {
-	a := stationAt(0, 0, 0, config.Circle)
-	b := stationAt(1, 100, 0, config.Triangle)
-	c := stationAt(2, 200, 0, config.Square)
-	d := stationAt(3, 300, 0, config.Pentagon)
-	line := newConnectedLine(config.LineColors[0], 0, a, b, c, d)
+	a := graphStation(0, 0, 0, config.Circle)
+	b := graphStation(1, 100, 0, config.Triangle)
+	c := graphStation(2, 200, 0, config.Square)
+	d := graphStation(3, 300, 0, config.Pentagon)
+	line := connectedLine(config.LineColors[0], 0, a, b, c, d)
 	line.Active = true
 
 	gs, gm := buildCentralityState([]*components.Station{a, b, c, d}, line)
 	cent := BetweennessCentrality(gs, gm)
 
 	const eps = 1e-9
-	if abs(cent[b]-cent[c]) > eps {
+	if absf(cent[b]-cent[c]) > eps {
 		t.Errorf("inner nodes B (%.6f) and C (%.6f) should have equal centrality on symmetric path",
 			cent[b], cent[c])
 	}
@@ -125,11 +143,11 @@ func TestBetweennessCentrality_SymmetricPath_InnerNodesEqual(t *testing.T) {
 // ── Normalisation ─────────────────────────────────────────────────────────────
 
 func TestBetweennessCentrality_NormalisedRange(t *testing.T) {
-	a := stationAt(0, 0, 0, config.Circle)
-	b := stationAt(1, 100, 0, config.Triangle)
-	c := stationAt(2, 200, 0, config.Square)
-	d := stationAt(3, 300, 0, config.Pentagon)
-	line := newConnectedLine(config.LineColors[0], 0, a, b, c, d)
+	a := graphStation(0, 0, 0, config.Circle)
+	b := graphStation(1, 100, 0, config.Triangle)
+	c := graphStation(2, 200, 0, config.Square)
+	d := graphStation(3, 300, 0, config.Pentagon)
+	line := connectedLine(config.LineColors[0], 0, a, b, c, d)
 	line.Active = true
 
 	gs, gm := buildCentralityState([]*components.Station{a, b, c, d}, line)
@@ -147,12 +165,12 @@ func TestBetweennessCentrality_NormalisedRange(t *testing.T) {
 
 func TestBetweennessCentrality_IsolatedNode_Zero(t *testing.T) {
 	// Node D is isolated (not on any line). It should have zero centrality.
-	a := stationAt(0, 0, 0, config.Circle)
-	b := stationAt(1, 100, 0, config.Triangle)
-	c := stationAt(2, 200, 0, config.Square)
-	isolated := stationAt(3, 999, 999, config.Pentagon)
+	a := graphStation(0, 0, 0, config.Circle)
+	b := graphStation(1, 100, 0, config.Triangle)
+	c := graphStation(2, 200, 0, config.Square)
+	isolated := graphStation(3, 999, 999, config.Pentagon)
 
-	line := newConnectedLine(config.LineColors[0], 0, a, b, c)
+	line := connectedLine(config.LineColors[0], 0, a, b, c)
 	line.Active = true
 
 	gs, gm := buildCentralityState([]*components.Station{a, b, c, isolated}, line)
@@ -165,7 +183,7 @@ func TestBetweennessCentrality_IsolatedNode_Zero(t *testing.T) {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-func abs(x float64) float64 {
+func absf(x float64) float64 {
 	if x < 0 {
 		return -x
 	}

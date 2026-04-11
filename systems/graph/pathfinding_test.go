@@ -1,4 +1,4 @@
-package systems
+package graph
 
 import (
 	"minimetro-go/components"

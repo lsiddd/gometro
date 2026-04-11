@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 	"minimetro-go/state"
 	"minimetro-go/systems"
 )
@@ -32,13 +33,18 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// inferenceTimeout caps how long a single /act request may block the game loop.
+// Must be comfortably below runInterval (300 ms) so a slow server degrades
+// gracefully rather than freezing the game.
+const inferenceTimeout = 250 * time.Millisecond
+
 // NewClient creates an RLClient that calls serverURL for action decisions.
 // Typical serverURL: "http://localhost:9000".
 func NewClient(serverURL string) *Client {
 	return &Client{
 		serverURL:   serverURL,
 		runInterval: 300.0, // ms, matches Solver default
-		httpClient:  &http.Client{},
+		httpClient:  &http.Client{Timeout: inferenceTimeout},
 	}
 }
 
@@ -58,12 +64,17 @@ func (c *Client) Update(gs *state.GameState, game *systems.Game, nowMs float64, 
 
 	if c.inUpgradeModal {
 		fakeEnv := c.buildFakeEnv(gs, game)
-		actionIdx := c.queryServer(fakeEnv)
-		if actionIdx >= offChooseUpgrade && actionIdx <= offChooseUpgrade+1 {
-			choiceIdx := actionIdx - offChooseUpgrade
-			if choiceIdx < len(c.upgradeChoices) {
-				systems.ApplyUpgrade(gs, c.upgradeChoices[choiceIdx])
-			}
+		actionVal := c.queryServer(fakeEnv)
+		if actionVal == nil {
+			// Server unreachable this frame — keep modal open and retry next frame.
+			return
+		}
+		choiceIdx := 0 // default: first option
+		if len(actionVal) == 4 && actionVal[0] == ActChooseUpgrade {
+			choiceIdx = actionVal[3]
+		}
+		if choiceIdx < len(c.upgradeChoices) {
+			systems.ApplyUpgrade(gs, c.upgradeChoices[choiceIdx])
 		}
 		c.inUpgradeModal = false
 		c.upgradeChoices = nil
@@ -76,8 +87,8 @@ func (c *Client) Update(gs *state.GameState, game *systems.Game, nowMs float64, 
 	c.lastRunMs = nowMs
 
 	fakeEnv := c.buildFakeEnv(gs, game)
-	actionIdx := c.queryServer(fakeEnv)
-	ApplyRLAction(fakeEnv, actionIdx)
+	actionVal := c.queryServer(fakeEnv)
+	ApplyRLAction(fakeEnv, actionVal)
 }
 
 // buildFakeEnv constructs a minimal RLEnv shell around the live game state so
@@ -98,17 +109,17 @@ type actReq struct {
 }
 
 type actResp struct {
-	Action int `json:"action"`
+	Action []int `json:"action"`
 }
 
-func (c *Client) queryServer(env *RLEnv) int {
+func (c *Client) queryServer(env *RLEnv) []int {
 	obs := BuildObservation(env)
-	mask := BuildActionMask(env)
+	mask := BuildActionMaskMulti(env)
 
 	body, err := json.Marshal(actReq{Obs: obs, Mask: mask})
 	if err != nil {
 		log.Printf("[RLClient] marshal error: %v", err)
-		return 0
+		return nil
 	}
 
 	resp, err := c.httpClient.Post(
@@ -118,14 +129,14 @@ func (c *Client) queryServer(env *RLEnv) int {
 	)
 	if err != nil {
 		log.Printf("[RLClient] inference server unreachable: %v", err)
-		return 0
+		return nil
 	}
 	defer resp.Body.Close()
 
 	var ar actResp
 	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
 		log.Printf("[RLClient] decode error: %v", err)
-		return 0
+		return nil
 	}
 	return ar.Action
 }

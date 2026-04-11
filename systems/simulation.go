@@ -1,6 +1,9 @@
 package systems
 
-import "minimetro-go/state"
+import (
+	"minimetro-go/state"
+	"minimetro-go/systems/graph"
+)
 
 const (
 	// SimDeltaMs is the fixed time step for each simulated frame (~60 Hz).
@@ -29,7 +32,7 @@ func Rollout(gs *state.GameState, frames int) *state.GameState {
 	// never share mutable caches.
 	localGame := &Game{
 		Initialized:  true,
-		GraphManager: NewGraphManager(),
+		GraphManager: graph.NewGraphManager(),
 	}
 
 	now := cp.SimTimeMs

@@ -229,9 +229,29 @@ func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
 		if st == nil {
 			return false
 		}
+		n := len(line.Stations)
+		// Refuse to extend a loop; PerturbInsertIntoLoop handles that case.
+		if n > 2 && line.Stations[0] == line.Stations[n-1] {
+			return false
+		}
 		insertIdx := -1
 		if p.AtHead {
 			insertIdx = 0
+		}
+		// Consume a bridge when the new segment crosses a river.
+		if n > 0 {
+			var neighbor *components.Station
+			if p.AtHead {
+				neighbor = line.Stations[0]
+			} else {
+				neighbor = line.Stations[n-1]
+			}
+			if CheckRiverCrossing(gs, neighbor, st) {
+				if gs.Bridges <= 0 {
+					return false
+				}
+				gs.Bridges--
+			}
 		}
 		return line.AddStation(st, insertIdx, markDirty)
 
@@ -246,7 +266,7 @@ func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
 
 	case PerturbCloseLoop:
 		n := len(line.Stations)
-		if n < 4 {
+		if n < 3 {
 			return false
 		}
 		if CheckRiverCrossing(gs, line.Stations[0], line.Stations[n-1]) {

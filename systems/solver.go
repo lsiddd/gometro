@@ -6,6 +6,7 @@ import (
 	"minimetro-go/components"
 	"minimetro-go/config"
 	"minimetro-go/state"
+	"minimetro-go/systems/graph"
 	"sort"
 	"time"
 )
@@ -68,14 +69,14 @@ func NewSolver() *Solver {
 }
 
 // Update is called every frame from main.go, after GameSystem.Update.
-func (s *Solver) Update(gs *state.GameState, gm *GraphManager, nowMs float64) {
+func (s *Solver) Update(gs *state.GameState, gm *graph.GraphManager, nowMs float64) {
 	if !s.Enabled || gs.Paused || gs.GameOver {
 		return
 	}
 
 	// Recompute centrality whenever graph topology has changed.
 	if gs.GraphDirty || s.centralityDirty {
-		s.centrality = BetweennessCentrality(gs, gm)
+		s.centrality = graph.BetweennessCentrality(gs, gm)
 		s.centralityDirty = false
 	}
 
@@ -217,7 +218,7 @@ func (s *Solver) scoreUpgrade(gs *state.GameState, upgrade string) float64 {
 }
 
 // tick executes at most one action, in strict priority order.
-func (s *Solver) tick(gs *state.GameState, gm *GraphManager, nowMs float64) {
+func (s *Solver) tick(gs *state.GameState, gm *graph.GraphManager, nowMs float64) {
 	// Always advance ghost state machine first (no topology change, no early return).
 	s.updateGhost(gs, nowMs)
 

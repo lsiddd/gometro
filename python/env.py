@@ -18,11 +18,10 @@ import requests
 import gymnasium as gym
 from gymnasium import spaces
 
+from constants import OBS_DIM, ACTION_DIMS, validate_server_constants
+
 # Path to the compiled rl_server binary (relative to this script).
 _DEFAULT_BINARY = os.path.join(os.path.dirname(__file__), "..", "rl_server")
-
-OBS_DIM = 514
-NUM_ACTIONS = 1845
 
 
 class MiniMetroEnv(gym.Env):
@@ -63,10 +62,10 @@ class MiniMetroEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-1.0, high=10.0, shape=(OBS_DIM,), dtype=np.float32
         )
-        self.action_space = spaces.Discrete(NUM_ACTIONS)
+        self.action_space = spaces.MultiDiscrete(ACTION_DIMS)
 
         # Latest mask, updated after every reset/step.
-        self._mask: np.ndarray = np.ones(NUM_ACTIONS, dtype=bool)
+        self._mask: np.ndarray = np.ones(sum(ACTION_DIMS), dtype=bool)
 
         if managed:
             self._start_server()
@@ -84,9 +83,9 @@ class MiniMetroEnv(gym.Env):
         return obs, {}
 
     def step(
-        self, action: int
+        self, action: np.ndarray
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
-        resp = self._post("/step", {"action": int(action)})
+        resp = self._post("/step", {"action": action.tolist()})
         obs = np.array(resp["obs"], dtype=np.float32)
         reward = float(resp["reward"])
         done = bool(resp["done"])
@@ -103,6 +102,9 @@ class MiniMetroEnv(gym.Env):
             self._proc.send_signal(signal.SIGTERM)
             self._proc.wait(timeout=5)
             self._proc = None
+        if hasattr(self, "_log_file") and self._log_file:
+            self._log_file.close()
+            self._log_file = None
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -113,16 +115,19 @@ class MiniMetroEnv(gym.Env):
                 f"rl_server binary not found at {binary}. "
                 "Run: go build -o rl_server ./cmd/rl_server/"
             )
+        log_path = f"/tmp/rl_server_{self.port}.log"
+        self._log_file = open(log_path, "w")
         self._proc = subprocess.Popen(
             [binary, "--port", str(self.port)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=self._log_file,
+            stderr=self._log_file,
         )
         # Wait for the server to be ready.
         deadline = time.time() + 10.0
         while time.time() < deadline:
             try:
-                requests.get(f"{self._base_url}/info", timeout=0.5)
+                resp = requests.get(f"{self._base_url}/info", timeout=0.5)
+                validate_server_constants(resp.json())
                 return
             except requests.exceptions.ConnectionError:
                 time.sleep(0.1)

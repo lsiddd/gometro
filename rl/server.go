@@ -25,6 +25,7 @@ func NewServer() *Server {
 	s.mux.HandleFunc("/info", s.handleInfo)
 	s.mux.HandleFunc("/reset", s.handleReset)
 	s.mux.HandleFunc("/step", s.handleStep)
+	s.mux.HandleFunc("/solver_act", s.handleSolverAct)
 	return s
 }
 
@@ -35,12 +36,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ── /info ─────────────────────────────────────────────────────────────────────
 
 type infoResp struct {
-	ObsDim     int `json:"obs_dim"`
-	NumActions int `json:"num_actions"`
+	ObsDim      int   `json:"obs_dim"`
+	ActionDims  []int `json:"action_dims"`
+	GlobalDim   int   `json:"global_dim"`
+	StationDim  int   `json:"station_dim"`
+	NumStations int   `json:"num_stations"`
+	LineDim     int   `json:"line_dim"`
+	NumLines    int   `json:"num_lines"`
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, infoResp{ObsDim: ObsDim, NumActions: NumActions})
+	writeJSON(w, infoResp{
+		ObsDim:      ObsDim,
+		ActionDims:  []int{NumActionCats, MaxLineSlots, MaxStationSlots, NumOptions},
+		GlobalDim:   GlobalDim,
+		StationDim:  StationDim,
+		NumStations: MaxStationSlots,
+		LineDim:     LineDim,
+		NumLines:    MaxLineSlots,
+	})
 }
 
 // ── /reset ────────────────────────────────────────────────────────────────────
@@ -75,7 +89,7 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 // ── /step ─────────────────────────────────────────────────────────────────────
 
 type stepReq struct {
-	Action int `json:"action"`
+	Action []int `json:"action"`
 }
 
 type stepResp struct {
@@ -108,6 +122,24 @@ func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[RL] Episode ended — score=%d passengers=%d",
 			s.env.gs.Score, s.env.gs.PassengersDelivered)
 	}
+}
+
+// ── /solver_act ───────────────────────────────────────────────────────────────
+
+type solverActResp struct {
+	Action []int `json:"action"`
+}
+
+// handleSolverAct returns the action the heuristic solver would take in the
+// current state WITHOUT advancing the simulation. Used by pretrain.py to collect
+// behavioral-cloning demonstrations.
+func (s *Server) handleSolverAct(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	action := s.env.InferSolverAction()
+	writeJSON(w, solverActResp{Action: action})
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

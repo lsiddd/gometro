@@ -30,3 +30,10 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/
+
+*zip
+*npz
+tb_logs
+*pyc
+rl_server
+minimetro
