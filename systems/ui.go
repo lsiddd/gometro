@@ -79,9 +79,14 @@ type UI struct {
 	Width  float64
 	Height float64
 
-	Solver *Solver
+	// AIEnabled is set by the caller to control the AI toggle button label.
+	// The UI never mutates it directly; call OnAIToggle to request a change.
+	AIEnabled bool
+	// OnAIToggle is called when the player clicks the AI on/off button.
+	// The caller is responsible for flipping its own state and updating AIEnabled.
+	OnAIToggle func()
 
-	cityButtons                         []cityButtonRect
+	cityButtons                                 []cityButtonRect
 	startBtnX, startBtnY, startBtnW, startBtnH float64
 }
 
@@ -156,9 +161,9 @@ func (ui *UI) Update(gs *state.GameState, ih *InputHandler, game *Game) {
 				gs.FastForward = (gs.FastForward + 1) % 3
 				return
 			}
-			if ui.Solver != nil && pointInRect(ih.MousePos, ui.Width-70, 8, 60, 30) {
-				ui.Solver.Enabled = !ui.Solver.Enabled
-				log.Printf("[UI] AI solver toggled: %v", ui.Solver.Enabled)
+			if ui.OnAIToggle != nil && pointInRect(ih.MousePos, ui.Width-70, 8, 60, 30) {
+				log.Printf("[UI] AI solver toggle requested")
+				ui.OnAIToggle()
 				return
 			}
 			for i := 0; i < gs.AvailableLines; i++ {
@@ -250,12 +255,12 @@ func (ui *UI) drawGameUI(screen *ebiten.Image, gs *state.GameState, ih *InputHan
 		drawText(screen, ffLabels[gs.FastForward], 13, float64(btnX)+10, float64(btnY)+6, color.RGBA{244, 241, 233, 255})
 	}
 
-	// AI toggle button
-	if ui.Solver != nil {
+	// AI toggle button (only shown when a toggle callback is registered).
+	if ui.OnAIToggle != nil {
 		btnX, btnY, btnW, btnH := float32(ui.Width-76), float32(10), float32(54), float32(28)
 		var bg color.RGBA
 		var label string
-		if ui.Solver.Enabled {
+		if ui.AIEnabled {
 			bg = color.RGBA{80, 160, 90, 255}
 			label = "AI ON"
 		} else {

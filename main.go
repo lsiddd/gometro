@@ -134,7 +134,6 @@ func main() {
 	ih := systems.NewInputHandler()
 	solver := systems.NewSolver()
 	ui := systems.NewUI()
-	ui.Solver = solver
 
 	g := &MinimetroGame{
 		GameState:    state.NewGameState(),
@@ -150,6 +149,14 @@ func main() {
 		g.RLClient = rl.NewClient(*rlClientURL)
 		g.Solver.Enabled = false // RL agent takes over
 	}
+
+	// Wire AI toggle: UI signals the intent; main.go owns the solver state.
+	ui.OnAIToggle = func() {
+		g.Solver.Enabled = !g.Solver.Enabled
+		ui.AIEnabled = g.Solver.Enabled
+		log.Printf("[main] AI solver toggled: %v", g.Solver.Enabled)
+	}
+	ui.AIEnabled = solver.Enabled
 
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
