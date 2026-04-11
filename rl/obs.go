@@ -5,7 +5,6 @@ import (
 	"minimetro-go/components"
 	"minimetro-go/config"
 	"minimetro-go/systems"
-	"minimetro-go/systems/graph"
 )
 
 // Observation-vector layout constants. Python reads these via GET /info and
@@ -132,8 +131,10 @@ func BuildObservation(env *RLEnv) []float32 {
 	i++
 
 	// ── Centrality ───────────────────────────────────────────────────────────
+	// CachedCentrality reuses the last computed result when the topology has not
+	// changed, avoiding a redundant O(V·E) Brandes pass every frame.
 	env.game.GraphManager.GetGraph(gs)
-	centrality := graph.BetweennessCentrality(gs, env.game.GraphManager)
+	centrality := env.game.GraphManager.CachedCentrality(gs)
 
 	// Normalise centrality to [0, 1] by dividing by the max observed value.
 	maxCentrality := float32(0)

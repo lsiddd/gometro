@@ -34,7 +34,15 @@ class InferenceHandler(BaseHTTPRequestHandler):
             return
 
         length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length))
+        try:
+            body = json.loads(self.rfile.read(length))
+        except json.JSONDecodeError as exc:
+            self.send_error(400, f"Invalid JSON: {exc}")
+            return
+
+        if "obs" not in body or "mask" not in body:
+            self.send_error(400, "Missing required keys: obs, mask")
+            return
 
         obs = np.array(body["obs"], dtype=np.float32).reshape(1, -1)
         mask = np.array(body["mask"], dtype=bool).reshape(1, -1)

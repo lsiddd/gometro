@@ -12,8 +12,9 @@ type Edge struct {
 }
 
 type GraphManager struct {
-	graph   map[*components.Station][]Edge
-	isDirty bool
+	graph       map[*components.Station][]Edge
+	isDirty     bool
+	centrality  map[*components.Station]float64 // nil when stale
 }
 
 func NewGraphManager() *GraphManager {
@@ -29,6 +30,7 @@ func (gm *GraphManager) MarkDirty() {
 func (gm *GraphManager) GetGraph(gameState *state.GameState) map[*components.Station][]Edge {
 	if gameState.GraphDirty || gm.graph == nil {
 		gm.graph = gm.buildGraph(gameState)
+		gm.centrality = nil // topology changed — centrality must be recomputed
 		gameState.GraphDirty = false
 		// Topology changed: cached paths may now be invalid.
 		// Nil them so each passenger recomputes lazily on next boarding attempt.
@@ -38,6 +40,16 @@ func (gm *GraphManager) GetGraph(gameState *state.GameState) map[*components.Sta
 		}
 	}
 	return gm.graph
+}
+
+// CachedCentrality returns the betweenness centrality map, computing it only
+// when the topology has changed since the last call. This avoids recomputing
+// the O(V·E) Brandes algorithm every frame when the graph is stable.
+func (gm *GraphManager) CachedCentrality(gs *state.GameState) map[*components.Station]float64 {
+	if gm.centrality == nil {
+		gm.centrality = BetweennessCentrality(gs, gm)
+	}
+	return gm.centrality
 }
 
 func (gm *GraphManager) buildGraph(gameState *state.GameState) map[*components.Station][]Edge {

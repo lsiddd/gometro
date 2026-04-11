@@ -101,7 +101,7 @@ func (e *RLEnv) Step(action []int) (obs []float32, reward float64, done bool, ma
 
 	reward = e.computeReward(done)
 	if !validAction {
-		reward -= 0.1 // Penalty for choosing an invalid MultiDiscrete combination
+		reward -= rewardInvalidAction
 	}
 	e.prevDelivered = gs.PassengersDelivered
 	e.prevWeek = gs.Week
@@ -134,13 +134,25 @@ func (e *RLEnv) runFrames() (gameOver bool) {
 	return false
 }
 
+// Reward shaping coefficients. All tunable values are centralised here so
+// experiments require no recompile of unrelated code — change a constant, run.
+const (
+	rewardPerPassenger   = 1.0    // dense delivery signal per passenger delivered
+	rewardOvercrowdCoeff = 0.05   // continuous penalty × Σ(overcrowdProgress/OvercrowdTime)
+	rewardDangerThresh   = 0.80   // overcrowd fraction at which a station is "in danger"
+	rewardDangerPenalty  = 0.5    // penalty per station above danger threshold
+	rewardWeekBonus      = 0.1    // bonus for surviving each new week
+	rewardTerminalPenalty = 1000.0 // subtracted on game-over to strongly discourage loss
+	rewardInvalidAction  = 0.1    // penalty for an invalid MultiDiscrete combination
+)
+
 // computeReward returns the shaped reward for the last transition.
 //
-//	+1.0 × passengers delivered since last step  (dense delivery signal)
-//	-0.05 × Σ(overcrowdProgress/OvercrowdTime)   (continuous crowding penalty)
-//	-0.5  per station above 80% overcrowd        (danger signal)
-//	+0.1  per new week completed                 (survival bonus)
-//	-1000 on game over                           (terminal penalty)
+//	+rewardPerPassenger   × passengers delivered since last step
+//	-rewardOvercrowdCoeff × Σ(overcrowdProgress/OvercrowdTime)
+//	-rewardDangerPenalty  per station above rewardDangerThresh overcrowd
+//	+rewardWeekBonus      per new week completed
+//	-rewardTerminalPenalty on game over
 func (e *RLEnv) computeReward(done bool) float64 {
 	gs := e.gs
 
@@ -151,22 +163,22 @@ func (e *RLEnv) computeReward(done bool) float64 {
 	for _, s := range gs.Stations {
 		frac := s.OvercrowdProgress / config.OvercrowdTime
 		overcrowdSum += frac
-		if frac > 0.80 {
+		if frac > rewardDangerThresh {
 			dangerCount++
 		}
 	}
 
 	weekBonus := 0.0
 	if gs.Week > e.prevWeek {
-		weekBonus = 0.1
+		weekBonus = rewardWeekBonus
 	}
 
 	terminal := 0.0
 	if done {
-		terminal = 1000.0
+		terminal = rewardTerminalPenalty
 	}
 
-	return delivered*1.0 - overcrowdSum*0.05 - dangerCount*0.5 + weekBonus - terminal
+	return delivered*rewardPerPassenger - overcrowdSum*rewardOvercrowdCoeff - dangerCount*rewardDangerPenalty + weekBonus - terminal
 }
 
 // InferSolverAction runs the solver on a deep copy of the current state and

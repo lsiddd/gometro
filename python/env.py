@@ -59,8 +59,9 @@ class MiniMetroEnv(gym.Env):
         self._proc: subprocess.Popen | None = None
         self._base_url = f"http://localhost:{port}"
 
+        # All observation features are normalised to [0, 1] by BuildObservation.
         self.observation_space = spaces.Box(
-            low=-1.0, high=10.0, shape=(OBS_DIM,), dtype=np.float32
+            low=0.0, high=1.0, shape=(OBS_DIM,), dtype=np.float32
         )
         self.action_space = spaces.MultiDiscrete(ACTION_DIMS)
 
@@ -76,6 +77,9 @@ class MiniMetroEnv(gym.Env):
         self, *, seed: int | None = None, options: dict | None = None
     ) -> tuple[np.ndarray, dict]:
         super().reset(seed=seed)
+        # The Go simulation is deterministic given its own RNG; the Python seed
+        # is forwarded to the Go server as a hint for reproducibility, but the
+        # server currently ignores it (Go uses its own global rand source).
         city = (options or {}).get("city", self.city)
         resp = self._post("/reset", {"city": city})
         obs = np.array(resp["obs"], dtype=np.float32)
@@ -100,7 +104,11 @@ class MiniMetroEnv(gym.Env):
     def close(self):
         if self.managed and self._proc is not None:
             self._proc.send_signal(signal.SIGTERM)
-            self._proc.wait(timeout=5)
+            try:
+                self._proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+                self._proc.wait()
             self._proc = None
         if hasattr(self, "_log_file") and self._log_file:
             self._log_file.close()

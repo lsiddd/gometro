@@ -75,8 +75,9 @@ func (s *Solver) Update(gs *state.GameState, gm *graph.GraphManager, nowMs float
 	}
 
 	// Recompute centrality whenever graph topology has changed.
+	// CachedCentrality deduplicates the O(V·E) Brandes pass with obs.go.
 	if gs.GraphDirty || s.centralityDirty {
-		s.centrality = graph.BetweennessCentrality(gs, gm)
+		s.centrality = gm.CachedCentrality(gs)
 		s.centralityDirty = false
 	}
 

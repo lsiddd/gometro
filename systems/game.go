@@ -59,7 +59,7 @@ func (g *Game) createInitialStations(gs *state.GameState, width, height float64)
 	types := config.BasicTypes()
 	centerX := width / 2
 	centerY := height / 2
-	spread := math.Min(width, height) * 0.2
+	spread := math.Min(width, height) * config.InitialStationSpreadFraction
 	minDistance := 120.0
 
 	for _, stationType := range types {
@@ -138,6 +138,13 @@ func (g *Game) Update(gs *state.GameState, deltaTime, screenWidth, screenHeight 
 		return "show_upgrades"
 	}
 
+	// Update order is load-bearing — do not reorder:
+	//  1. Spawn passengers/stations so new arrivals exist before overcrowd ticks.
+	//  2. Overcrowd: progress advances against the just-spawned passenger counts.
+	//  3. Reservations: assign incoming trains before boarding so trains don't
+	//     overfill (depends on train positions updated in the previous frame).
+	//  4. Trains: move, board, alight — consumes reservations set in step 3.
+	//  5. Cleanup: remove deleted lines after all train state has been resolved.
 	g.updateSpawning(gs, screenWidth, screenHeight, nowMs)
 	g.updateOvercrowding(gs, deltaTime)
 	g.updatePassengerReservations(gs, nowMs)

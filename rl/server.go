@@ -1,6 +1,7 @@
 package rl
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -144,9 +145,16 @@ func (s *Server) handleSolverAct(w http.ResponseWriter, r *http.Request) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// writeJSON encodes v into a temporary buffer before writing so that a
+// serialisation error results in a 500 response rather than a partial body
+// with a 200 status (which would silently corrupt the Python client).
 func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(v); err != nil {
 		log.Printf("[RL] JSON encode error: %v", err)
+		http.Error(w, "internal encoding error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(buf.Bytes())
 }

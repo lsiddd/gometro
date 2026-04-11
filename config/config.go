@@ -50,6 +50,16 @@ const (
 
 	// Rendering
 	OvercrowdPulseHz = 150.0 // divisor used in sin(nowMs/OvercrowdPulseHz) for station pulse
+
+	// Station passenger queue safety cap. Prevents unbounded memory growth when
+	// a station is completely disconnected for many weeks. Set well above any
+	// realistic interchange capacity (MaxPassengersWithInterchange = 18) so it
+	// only activates in degenerate cases.
+	MaxPassengerQueueCap = 100
+
+	// Fraction of min(screenWidth, screenHeight) used as the radius when placing
+	// initial stations. Keeps stations clustered near the map centre at game start.
+	InitialStationSpreadFraction = 0.2
 )
 
 var LineColors = []string{

@@ -41,7 +41,7 @@ func (s *Station) Capacity(cityBase int) int {
 }
 
 func (s *Station) AddPassenger(p *Passenger, currentTime float64) {
-	if len(s.Passengers) < 100 {
+	if len(s.Passengers) < config.MaxPassengerQueueCap {
 		s.Passengers = append(s.Passengers, p)
 	}
 }
