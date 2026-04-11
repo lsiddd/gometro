@@ -14,7 +14,7 @@ build:
 	go build -o {{binary}} ./cmd/rl_server/
 
 # build, start TensorBoard, then train from scratch
-train: build
+train: build _kill-servers
 	#!/usr/bin/env bash
 	set -euo pipefail
 	just _start-tb
@@ -26,7 +26,7 @@ train: build
 
 # build, start TensorBoard, then resume from latest checkpoint
 # usage: just resume   OR   just resume checkpoints/pretrain_bc
-resume ckpt_arg="": build
+resume ckpt_arg="": build _kill-servers
 	#!/usr/bin/env bash
 	set -euo pipefail
 	just _start-tb
@@ -50,7 +50,7 @@ resume ckpt_arg="": build
 	just _stop-tb
 
 # collect solver demos and run behavioral cloning pre-training
-pretrain episodes="50" city="london": build
+pretrain episodes="50" city="london": build _kill-servers
 	#!/usr/bin/env bash
 	set -euo pipefail
 	just _start-tb
@@ -65,6 +65,12 @@ tensorboard:
 	cd {{python_dir}} && uv run tensorboard --logdir tb_logs --port {{tb_port}}
 
 # ── internal helpers ──────────────────────────────────────────────────────────
+
+[private]
+_kill-servers:
+	#!/usr/bin/env bash
+	pkill -f 'rl_server' 2>/dev/null || true
+	sleep 0.3
 
 [private]
 _start-tb:

@@ -45,7 +45,9 @@ func upgradeTypeIndex(key string) float32 {
 }
 
 // stationTypeIndex maps a StationType to an integer label in [0, 6].
-func stationTypeIndex(t config.StationType) float32 {
+// Returns -1 for unknown types so callers can skip them rather than
+// misclassifying them as Circle (index 0).
+func stationTypeIndex(t config.StationType) int {
 	switch t {
 	case config.Circle:
 		return 0
@@ -62,7 +64,7 @@ func stationTypeIndex(t config.StationType) float32 {
 	case config.Cross:
 		return 6
 	}
-	return 0
+	return -1
 }
 
 // clamp01 clamps v to [0, 1].
@@ -150,7 +152,7 @@ func BuildObservation(env *RLEnv) []float32 {
 	//   9-15: passenger demand by type (Circle..Cross) / capacity
 	cityCfg := config.Cities[gs.SelectedCity]
 	for s := 0; s < MaxStationSlots; s++ {
-		base := i + s*16
+		base := i + s*StationDim
 		if s >= len(gs.Stations) {
 			continue // padding zeros
 		}
@@ -176,7 +178,7 @@ func BuildObservation(env *RLEnv) []float32 {
 		// Passenger demand breakdown by destination type.
 		var demand [numStationTypes]float32
 		for _, p := range st.Passengers {
-			idx := int(stationTypeIndex(p.Destination))
+			idx := stationTypeIndex(p.Destination)
 			if idx >= 0 && idx < numStationTypes {
 				demand[idx]++
 			}
@@ -187,9 +189,14 @@ func BuildObservation(env *RLEnv) []float32 {
 			centVal = float32(centrality[st]) / maxCentrality
 		}
 
+		typeIdx := stationTypeIndex(st.Type)
+		if typeIdx < 0 {
+			typeIdx = 0
+		}
+
 		obs[base+0] = float32(st.X) / systems.SimScreenWidth
 		obs[base+1] = float32(st.Y) / systems.SimScreenHeight
-		obs[base+2] = stationTypeIndex(st.Type) / float32(numStationTypes-1)
+		obs[base+2] = float32(typeIdx) / float32(numStationTypes-1)
 		obs[base+3] = clamp01(float32(len(st.Passengers)) / fcap)
 		obs[base+4] = clamp01(float32(st.OvercrowdProgress) / config.OvercrowdTime)
 		if st.IsInterchange {
@@ -201,12 +208,16 @@ func BuildObservation(env *RLEnv) []float32 {
 		for t := 0; t < numStationTypes; t++ {
 			obs[base+9+t] = clamp01(demand[t] / fcap)
 		}
+		// Compile-time guard: StationDim must cover indices 0..15 (9 base + 7 demand).
+		_ = [StationDim - 16]struct{}{} // fails to compile if StationDim != 16
 	}
-	i += MaxStationSlots * 16
+	i += MaxStationSlots * StationDim
 
 	// ── Line features (7 × 7) ────────────────────────────────────────────────
+	// Compile-time guard: LineDim must cover indices 0..6.
+	_ = [LineDim - 7]struct{}{}
 	for l := 0; l < MaxLineSlots; l++ {
-		base := i + l*7
+		base := i + l*LineDim
 		if l >= len(gs.Lines) {
 			continue
 		}
@@ -250,7 +261,7 @@ func BuildObservation(env *RLEnv) []float32 {
 		}
 		obs[base+6] = clamp01(float32(arcLen) / 1000.0)
 	}
-	i += MaxLineSlots * 7
+	i += MaxLineSlots * LineDim
 
 	// ── Topology (7 × 50) ────────────────────────────────────────────────────
 	for l := 0; l < MaxLineSlots; l++ {
@@ -294,6 +305,10 @@ func BuildObservation(env *RLEnv) []float32 {
 			obs[i] = val
 			i++
 		}
+	}
+
+	if i != ObsDim {
+		panic("BuildObservation: wrote wrong number of elements")
 	}
 
 	return obs

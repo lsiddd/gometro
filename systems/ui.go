@@ -140,12 +140,12 @@ func (ui *UI) Update(gs *state.GameState, ih *InputHandler, game *Game) {
 			x1, y1, x2, y2, cw, ch := ui.upgradeCardRects()
 			if pointInRect(ih.MousePos, x1, y1, cw, ch) {
 				log.Printf("[UI] Upgrade chosen: %s", ui.UpgradeChoices[0])
-				applyUpgrade(gs, ui.UpgradeChoices[0])
+				ApplyUpgrade(gs, ui.UpgradeChoices[0])
 				gs.Paused = false
 				ui.ShowUpgradeModal = false
 			} else if pointInRect(ih.MousePos, x2, y2, cw, ch) {
 				log.Printf("[UI] Upgrade chosen: %s", ui.UpgradeChoices[1])
-				applyUpgrade(gs, ui.UpgradeChoices[1])
+				ApplyUpgrade(gs, ui.UpgradeChoices[1])
 				gs.Paused = false
 				ui.ShowUpgradeModal = false
 			}

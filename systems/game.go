@@ -866,8 +866,8 @@ func pickWeightedUpgrades(pool []weightedUpgrade, n int) []string {
 	return result
 }
 
-// applyUpgrade mutates the game state to grant the chosen weekly upgrade.
-func applyUpgrade(gs *state.GameState, choice string) {
+// ApplyUpgrade mutates the game state to grant the chosen weekly upgrade.
+func ApplyUpgrade(gs *state.GameState, choice string) {
 	switch choice {
 	case UpgradeNewLine:
 		if gs.AvailableLines < gs.MaxLines {
@@ -881,6 +881,3 @@ func applyUpgrade(gs *state.GameState, choice string) {
 		gs.Interchanges++
 	}
 }
-
-// ApplyUpgrade is the exported entry point for applying a weekly upgrade choice.
-func ApplyUpgrade(gs *state.GameState, choice string) { applyUpgrade(gs, choice) }

@@ -114,7 +114,7 @@ func TestGeneratePerturbations_FourStationsProducesCloseLoop(t *testing.T) {
 	}
 }
 
-// ── applyPerturbation ─────────────────────────────────────────────────────────
+// ── ApplyPerturbation ─────────────────────────────────────────────────────────
 
 func TestApplyPerturbation_AddEndpoint_Append(t *testing.T) {
 	gs := buildAnnealingState()
@@ -123,8 +123,8 @@ func TestApplyPerturbation_AddEndpoint_Append(t *testing.T) {
 	newSt := gs.Stations[2] // square, not yet on the line
 
 	p := &Perturbation{Type: PerturbAddEndpoint, LineIdx: 0, StationID: newSt.ID, AtHead: false}
-	if !applyPerturbation(gs, p) {
-		t.Fatal("applyPerturbation returned false for valid add")
+	if !ApplyPerturbation(gs, p) {
+		t.Fatal("ApplyPerturbation returned false for valid add")
 	}
 	if len(line.Stations) != initialLen+1 {
 		t.Errorf("line should have %d stations after add, got %d", initialLen+1, len(line.Stations))
@@ -140,8 +140,8 @@ func TestApplyPerturbation_AddEndpoint_Prepend(t *testing.T) {
 	newSt := gs.Stations[2]
 
 	p := &Perturbation{Type: PerturbAddEndpoint, LineIdx: 0, StationID: newSt.ID, AtHead: true}
-	if !applyPerturbation(gs, p) {
-		t.Fatal("applyPerturbation returned false for valid prepend")
+	if !ApplyPerturbation(gs, p) {
+		t.Fatal("ApplyPerturbation returned false for valid prepend")
 	}
 	if line.Stations[0].ID != newSt.ID {
 		t.Error("prepended station is not at the head")
@@ -157,8 +157,8 @@ func TestApplyPerturbation_RemoveEndpoint(t *testing.T) {
 	tail := line.Stations[initialLen-1]
 
 	p := &Perturbation{Type: PerturbRemoveEndpoint, LineIdx: 0, StationID: tail.ID, AtHead: false}
-	if !applyPerturbation(gs, p) {
-		t.Fatal("applyPerturbation returned false for valid remove")
+	if !ApplyPerturbation(gs, p) {
+		t.Fatal("ApplyPerturbation returned false for valid remove")
 	}
 	if len(line.Stations) != initialLen-1 {
 		t.Errorf("line should have %d stations after remove, got %d", initialLen-1, len(line.Stations))
@@ -179,8 +179,8 @@ func TestApplyPerturbation_CloseLoop(t *testing.T) {
 	gs.Bridges = 5
 
 	p := &Perturbation{Type: PerturbCloseLoop, LineIdx: 0}
-	if !applyPerturbation(gs, p) {
-		t.Fatal("applyPerturbation returned false for valid close loop")
+	if !ApplyPerturbation(gs, p) {
+		t.Fatal("ApplyPerturbation returned false for valid close loop")
 	}
 	n := len(line.Stations)
 	if line.Stations[0] != line.Stations[n-1] {
@@ -205,8 +205,8 @@ func TestApplyPerturbation_SwapEndpoint(t *testing.T) {
 		AtHead:       false,
 		NewStationID: newSt.ID,
 	}
-	if !applyPerturbation(gs, p) {
-		t.Fatal("applyPerturbation returned false for valid swap")
+	if !ApplyPerturbation(gs, p) {
+		t.Fatal("ApplyPerturbation returned false for valid swap")
 	}
 	newTail := line.Stations[len(line.Stations)-1]
 	if newTail.ID != newSt.ID {
@@ -229,8 +229,8 @@ func TestApplyPerturbation_OpenLoop_ConvertsToLinear(t *testing.T) {
 	gs.Bridges = 5
 
 	p := &Perturbation{Type: PerturbOpenLoop, LineIdx: 0}
-	if !applyPerturbation(gs, p) {
-		t.Fatal("applyPerturbation returned false for valid open loop")
+	if !ApplyPerturbation(gs, p) {
+		t.Fatal("ApplyPerturbation returned false for valid open loop")
 	}
 	n := len(line.Stations)
 	if line.Stations[0] == line.Stations[n-1] {
@@ -245,8 +245,8 @@ func TestApplyPerturbation_OpenLoop_NotALoop_ReturnsFalse(t *testing.T) {
 	gs := buildAnnealingState()
 	// The line in buildAnnealingState is open (not a loop).
 	p := &Perturbation{Type: PerturbOpenLoop, LineIdx: 0}
-	if applyPerturbation(gs, p) {
-		t.Error("applyPerturbation should return false for a non-loop line")
+	if ApplyPerturbation(gs, p) {
+		t.Error("ApplyPerturbation should return false for a non-loop line")
 	}
 }
 
@@ -271,8 +271,8 @@ func TestApplyPerturbation_OpenLoop_TrainDirectionReset(t *testing.T) {
 	gs.Trains = []*components.Train{train}
 
 	p := &Perturbation{Type: PerturbOpenLoop, LineIdx: 0}
-	if !applyPerturbation(gs, p) {
-		t.Fatal("applyPerturbation returned false")
+	if !ApplyPerturbation(gs, p) {
+		t.Fatal("ApplyPerturbation returned false")
 	}
 	if train.Direction != 1 {
 		t.Errorf("train direction should be reset to 1 after opening loop, got %d", train.Direction)
@@ -292,16 +292,16 @@ func TestGeneratePerturbations_OpenLoop_NotGeneratedForLinearLine(t *testing.T) 
 func TestApplyPerturbation_InvalidLineIdx_ReturnsFalse(t *testing.T) {
 	gs := buildAnnealingState()
 	p := &Perturbation{Type: PerturbAddEndpoint, LineIdx: 999, StationID: 0}
-	if applyPerturbation(gs, p) {
-		t.Error("applyPerturbation should return false for invalid line index")
+	if ApplyPerturbation(gs, p) {
+		t.Error("ApplyPerturbation should return false for invalid line index")
 	}
 }
 
 func TestApplyPerturbation_UnknownStation_ReturnsFalse(t *testing.T) {
 	gs := buildAnnealingState()
 	p := &Perturbation{Type: PerturbAddEndpoint, LineIdx: 0, StationID: 9999}
-	if applyPerturbation(gs, p) {
-		t.Error("applyPerturbation should return false for unknown station ID")
+	if ApplyPerturbation(gs, p) {
+		t.Error("ApplyPerturbation should return false for unknown station ID")
 	}
 }
 

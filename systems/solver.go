@@ -122,7 +122,7 @@ func (s *Solver) applySAResult(gs *state.GameState, result SAResult, nowMs float
 		log.Printf("[Solver] SA result (%.1f) not better than baseline (%.1f) — discarded", result.Score, baseline)
 		return
 	}
-	if applyPerturbation(gs, result.Action) {
+	if ApplyPerturbation(gs, result.Action) {
 		log.Printf("[Solver] SA action applied (type=%d line=%d) score %.1f → %.1f",
 			result.Action.Type, result.Action.LineIdx, baseline, result.Score)
 	}

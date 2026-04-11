@@ -83,7 +83,7 @@ func runSA(gs *state.GameState, budget time.Duration) SAResult {
 
 		// Apply perturbation to an independent copy and evaluate via rollout.
 		candidate := current.DeepCopy()
-		if !applyPerturbation(candidate, p) {
+		if !ApplyPerturbation(candidate, p) {
 			temp *= saCoolingRate
 			continue
 		}
@@ -201,10 +201,10 @@ func generatePerturbations(gs *state.GameState) []*Perturbation {
 	return result
 }
 
-// applyPerturbation mutates gs in-place. Returns false when infeasible.
+// ApplyPerturbation mutates gs in-place. Returns false when infeasible.
 // Station lookups are performed by ID so this is safe to call on any copy
 // of the state from which the Perturbation was originally generated.
-func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
+func ApplyPerturbation(gs *state.GameState, p *Perturbation) bool {
 	if p.LineIdx >= len(gs.Lines) {
 		return false
 	}
@@ -340,12 +340,6 @@ func applyPerturbation(gs *state.GameState, p *Perturbation) bool {
 		return line.AddStation(st, pos, markDirty)
 	}
 	return false
-}
-
-// ApplyPerturbation is the exported entry point for topology mutations used by
-// the RL environment. It delegates to the internal applyPerturbation helper.
-func ApplyPerturbation(gs *state.GameState, p *Perturbation) bool {
-	return applyPerturbation(gs, p)
 }
 
 // clampTrainIndices ensures that all trains on line have CurrentStationIndex
