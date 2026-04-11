@@ -20,10 +20,11 @@ from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 
+from constants import TRAIN_BASE_PORT
 from env import MiniMetroEnv
 from models import MetroFeatureExtractor
 
-BASE_PORT = 8765
+BASE_PORT = TRAIN_BASE_PORT
 CHECKPOINT_DIR = "checkpoints"
 LOG_DIR = "tb_logs"
 

@@ -32,10 +32,11 @@ from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from torch.utils.data import DataLoader, TensorDataset
 
-from env import MiniMetroEnv, ACTION_DIMS
+from constants import ACTION_DIMS, PRETRAIN_BASE_PORT
+from env import MiniMetroEnv
 from models import MetroFeatureExtractor
 
-BASE_PORT    = 9200
+BASE_PORT    = PRETRAIN_BASE_PORT
 CHECKPOINT_DIR = "checkpoints"
 
 
