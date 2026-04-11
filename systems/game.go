@@ -97,28 +97,40 @@ func (g *Game) createInitialStations(gs *state.GameState, width, height float64)
 		}
 
 		if attempts >= maxAttempts {
-			// Widen the search radius and ignore the river constraint as a last resort
-			// to avoid placing every fallback station on top of each other at center.
-			for fallback := 0; fallback < 500; fallback++ {
-				angle := rand.Float64() * math.Pi * 2
-				radius := spread * (0.3 + rand.Float64()*1.2)
-				x := centerX + math.Cos(angle)*radius
-				y := centerY + math.Sin(angle)*radius
-				tooClose := false
-				for _, s := range gs.Stations {
-					if math.Hypot(s.X-x, s.Y-y) < minDistance {
-						tooClose = true
-						break
-					}
-				}
-				if !tooClose {
-					log.Printf("[Game] Initial station fallback placement: type=%s pos=(%.0f,%.0f)", stationType, x, y)
-					gs.AddStation(components.NewStation(gs.StationIDCounter, x, y, stationType))
-					break
-				}
-			}
+			g.placeFallbackStation(gs, centerX, centerY, spread, minDistance, stationType)
 		}
 	}
+}
+
+// placeFallbackStation is called when the normal placement loop in
+// createInitialStations exhausts its attempts. It widens the search radius
+// (factor 0.3–1.5× spread instead of 0.5–1.0×) and ignores the river
+// constraint as a last resort, so every station type is placed even on
+// heavily obstructed maps.
+//
+// Returns true if a valid position was found and the station was added.
+// Returns false only when 500 attempts with the widened radius all fail
+// (degenerate case: minDistance larger than the available canvas).
+func (g *Game) placeFallbackStation(gs *state.GameState, centerX, centerY, spread, minDistance float64, stationType config.StationType) bool {
+	for fallback := 0; fallback < 500; fallback++ {
+		angle := rand.Float64() * math.Pi * 2
+		radius := spread * (0.3 + rand.Float64()*1.2)
+		x := centerX + math.Cos(angle)*radius
+		y := centerY + math.Sin(angle)*radius
+		tooClose := false
+		for _, s := range gs.Stations {
+			if math.Hypot(s.X-x, s.Y-y) < minDistance {
+				tooClose = true
+				break
+			}
+		}
+		if !tooClose {
+			log.Printf("[Game] Initial station fallback placement: type=%s pos=(%.0f,%.0f)", stationType, x, y)
+			gs.AddStation(components.NewStation(gs.StationIDCounter, x, y, stationType))
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Game) Update(gs *state.GameState, deltaTime, screenWidth, screenHeight float64, nowMs float64) string {

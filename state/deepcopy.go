@@ -13,6 +13,20 @@ import "minimetro-go/components"
 //   - SpawnStationsEnabled = false  (no new stations during evaluation)
 //   - Paused = false
 //   - GraphDirty = true             (forces graph rebuild with new pointers)
+//
+// Implementation uses a strict two-phase approach:
+//
+//  1. Allocation phase (Steps 1–4): allocate every new object and populate the
+//     four identity maps (stMap, lineMap, trainMap, paxMap) that translate old
+//     pointers to new ones.  No cross-references are set here.
+//
+//  2. Wiring phase (Steps 5–8): iterate over the maps and fill every pointer
+//     field (CurrentStation, OnTrain, Line.Stations, …) using the maps built
+//     in phase 1.
+//
+// This ordering guarantees that every destination pointer already exists when
+// it is assigned — there is no partial initialisation window where a pointer
+// could be set to a not-yet-constructed object.
 func (gs *GameState) DeepCopy() *GameState {
 	// ── Step 1: Stations ────────────────────────────────────────────────────
 	stMap := make(map[*components.Station]*components.Station, len(gs.Stations))
@@ -36,6 +50,12 @@ func (gs *GameState) DeepCopy() *GameState {
 	// ── Step 2: Lines ────────────────────────────────────────────────────────
 	// Collect ALL lines: both the official gs.Lines and any dummy lines that
 	// trains may reference after a line deletion (cleanupDeletedLines).
+	//
+	// Dummy lines are ephemeral: when a line is deleted, cleanupDeletedLines
+	// replaces the gs.Lines slot with a fresh empty line but keeps the old line
+	// pointer alive on each train so it can finish evacuating passengers.  The
+	// dummy line is never stored in gs.Lines, so we discover it by scanning
+	// gs.Trains and copying any line pointer absent from lineMap.
 	lineMap := make(map[*components.Line]*components.Line)
 	newLines := make([]*components.Line, len(gs.Lines))
 

@@ -21,6 +21,7 @@ import numpy as np
 from sb3_contrib import MaskablePPO
 
 from models import MetroFeatureExtractor
+from http_schemas import parse_act_request
 
 
 class InferenceHandler(BaseHTTPRequestHandler):
@@ -35,17 +36,14 @@ class InferenceHandler(BaseHTTPRequestHandler):
 
         length = int(self.headers.get("Content-Length", 0))
         try:
-            body = json.loads(self.rfile.read(length))
-        except json.JSONDecodeError as exc:
-            self.send_error(400, f"Invalid JSON: {exc}")
+            raw = json.loads(self.rfile.read(length))
+            req = parse_act_request(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            self.send_error(400, str(exc))
             return
 
-        if "obs" not in body or "mask" not in body:
-            self.send_error(400, "Missing required keys: obs, mask")
-            return
-
-        obs = np.array(body["obs"], dtype=np.float32).reshape(1, -1)
-        mask = np.array(body["mask"], dtype=bool).reshape(1, -1)
+        obs = np.array(req["obs"], dtype=np.float32).reshape(1, -1)
+        mask = np.array(req["mask"], dtype=bool).reshape(1, -1)
 
         action, _ = self.model.predict(obs, action_masks=mask, deterministic=True)
         action_array = action[0].tolist()

@@ -167,6 +167,23 @@ func StationCountPenalty(line *components.Line) float64 {
 // segmentsIntersectStrict returns true when segments AB and CD have a proper
 // interior crossing — neither endpoint of one lies on the other. This is used
 // to detect line crossings outside of shared stations.
+//
+// Algorithm — signed-area (orientation) test:
+//
+//	cross(O, P, Q) = (P−O) × (Q−O) = (Px−Ox)(Qy−Oy) − (Py−Oy)(Qx−Ox)
+//
+// The sign of cross(O, P, Q) encodes which side of directed line OP the point
+// Q lies on: positive = left, negative = right, zero = collinear.
+//
+// For AB and CD to properly cross, both of the following must hold:
+//  1. A and B are on strictly opposite sides of line CD
+//     (d1 and d2 have opposite signs).
+//  2. C and D are on strictly opposite sides of line AB
+//     (d3 and d4 have opposite signs).
+//
+// Strict inequality (no ≤ 0) excludes collinear and endpoint-touching cases,
+// so a train path that terminates exactly at an interchange station does not
+// count as a crossing.
 func segmentsIntersectStrict(ax, ay, bx, by, cx, cy, dx, dy float64) bool {
 	cross := func(ox, oy, px, py, qx, qy float64) float64 {
 		return (px-ox)*(qy-oy) - (py-oy)*(qx-ox)

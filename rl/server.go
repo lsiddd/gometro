@@ -70,13 +70,11 @@ type resetResp struct {
 }
 
 func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	var req resetReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	req, ok := decodeBody[resetReq](w, r)
+	if !ok {
 		return
 	}
 	city := req.City
@@ -102,13 +100,11 @@ type stepResp struct {
 }
 
 func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	var req stepReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	req, ok := decodeBody[stepReq](w, r)
+	if !ok {
 		return
 	}
 	obs, reward, done, mask := s.env.Step(req.Action)
@@ -135,8 +131,7 @@ type solverActResp struct {
 // current state WITHOUT advancing the simulation. Used by pretrain.py to collect
 // behavioral-cloning demonstrations.
 func (s *Server) handleSolverAct(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
 		return
 	}
 	action := s.env.InferSolverAction()
@@ -144,6 +139,30 @@ func (s *Server) handleSolverAct(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+// requireMethod rejects the request with 405 if the HTTP method does not match
+// any of the allowed values. Returns false when the request was rejected so the
+// caller can return immediately.
+func requireMethod(w http.ResponseWriter, r *http.Request, methods ...string) bool {
+	for _, m := range methods {
+		if r.Method == m {
+			return true
+		}
+	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return false
+}
+
+// decodeBody decodes a JSON request body into T. On failure it writes a 400
+// response and returns false so the caller can return immediately.
+func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
+	var v T
+	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return v, false
+	}
+	return v, true
+}
 
 // writeJSON encodes v into a temporary buffer before writing so that a
 // serialisation error results in a 500 response rather than a partial body

@@ -19,6 +19,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from constants import OBS_DIM, ACTION_DIMS, validate_server_constants
+from http_schemas import parse_reset_response, parse_step_response
 
 # Path to the compiled rl_server binary (relative to this script).
 _DEFAULT_BINARY = os.path.join(os.path.dirname(__file__), "..", "rl_server")
@@ -81,7 +82,7 @@ class MiniMetroEnv(gym.Env):
         # is forwarded to the Go server as a hint for reproducibility, but the
         # server currently ignores it (Go uses its own global rand source).
         city = (options or {}).get("city", self.city)
-        resp = self._post("/reset", {"city": city})
+        resp = parse_reset_response(self._post("/reset", {"city": city}))
         obs = np.array(resp["obs"], dtype=np.float32)
         self._mask = np.array(resp["mask"], dtype=bool)
         return obs, {}
@@ -89,13 +90,12 @@ class MiniMetroEnv(gym.Env):
     def step(
         self, action: np.ndarray
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
-        resp = self._post("/step", {"action": action.tolist()})
+        resp = parse_step_response(self._post("/step", {"action": action.tolist()}))
         obs = np.array(resp["obs"], dtype=np.float32)
         reward = float(resp["reward"])
         done = bool(resp["done"])
         self._mask = np.array(resp["mask"], dtype=bool)
-        info = resp.get("info", {})
-        return obs, reward, done, False, info  # truncated=False
+        return obs, reward, done, False, resp["info"]  # truncated=False
 
     def action_masks(self) -> np.ndarray:
         """Return the current boolean action mask (for sb3-contrib MaskablePPO)."""
