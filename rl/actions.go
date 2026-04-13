@@ -71,7 +71,7 @@ func BuildActionMaskMulti(env *RLEnv) []bool {
 		nLines = len(gs.Lines)
 	}
 	for l := 0; l < MaxLineSlots; l++ {
-		if l < nLines || l < len(gs.Lines) {
+		if l < nLines {
 			mask[14+l] = true
 		}
 	}

@@ -15,7 +15,7 @@ import (
 func initializedEnv(t *testing.T) *RLEnv {
 	t.Helper()
 	env := NewRLEnv()
-	env.Reset("london")
+	env.Reset("london", 1.0)
 	return env
 }
 

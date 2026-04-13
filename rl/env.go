@@ -43,10 +43,15 @@ func NewRLEnv() *RLEnv {
 }
 
 // Reset initialises a new episode for the given city (e.g. "london").
+// spawnRateFactor is a curriculum-learning multiplier (>1.0 = slower spawns =
+// easier); pass 1.0 for normal difficulty.
 // Returns the initial observation and action mask.
-func (e *RLEnv) Reset(city string) (obs []float32, mask []bool) {
+func (e *RLEnv) Reset(city string, spawnRateFactor float64) (obs []float32, mask []bool) {
 	e.gs = state.NewGameState()
 	e.gs.SelectedCity = city
+	if spawnRateFactor > 0 {
+		e.gs.SpawnRateFactor = spawnRateFactor
+	}
 	e.game = systems.NewGame()
 	e.game.InitGame(e.gs, systems.SimScreenWidth, systems.SimScreenHeight)
 
@@ -79,16 +84,20 @@ func (e *RLEnv) Step(action []int) (obs []float32, reward float64, done bool, ma
 	validAction := true
 
 	if e.inUpgradeModal {
-		// Resolve upgrade choice.
+		// Resolve upgrade choice. Only ActChooseUpgrade is valid here;
+		// any other action is penalised and the modal stays open so the
+		// agent is forced to pick a valid upgrade on the next step.
 		if len(action) == 4 && action[0] == ActChooseUpgrade {
 			choiceIdx := action[3]
 			if choiceIdx < len(e.upgradeChoices) {
 				systems.ApplyUpgrade(gs, e.upgradeChoices[choiceIdx])
 			}
+			e.inUpgradeModal = false
+			e.upgradeChoices = nil
+			gs.Paused = false
+		} else {
+			validAction = false
 		}
-		e.inUpgradeModal = false
-		e.upgradeChoices = nil
-		gs.Paused = false
 	} else {
 		validAction = ApplyRLAction(e, action)
 	}
@@ -141,7 +150,7 @@ const (
 	rewardOvercrowdCoeff = 0.05   // continuous penalty × Σ(overcrowdProgress/OvercrowdTime)
 	rewardDangerThresh   = 0.80   // overcrowd fraction at which a station is "in danger"
 	rewardDangerPenalty  = 0.5    // penalty per station above danger threshold
-	rewardWeekBonus      = 0.1    // bonus for surviving each new week
+	rewardWeekBonus      = 2.0    // bonus for surviving each new week (was 0.1 — too weak vs passenger signal)
 	rewardTerminalPenalty = 1000.0 // subtracted on game-over to strongly discourage loss
 	rewardInvalidAction  = 0.1    // penalty for an invalid MultiDiscrete combination
 )
@@ -161,7 +170,11 @@ func (e *RLEnv) computeReward(done bool) float64 {
 	var overcrowdSum float64
 	var dangerCount float64
 	for _, s := range gs.Stations {
-		frac := s.OvercrowdProgress / config.OvercrowdTime
+		effectiveLimit := float64(config.OvercrowdTime)
+		if s.OvercrowdIsGrace {
+			effectiveLimit += config.OvercrowdGraceExtra
+		}
+		frac := s.OvercrowdProgress / effectiveLimit
 		overcrowdSum += frac
 		if frac > rewardDangerThresh {
 			dangerCount++
@@ -258,6 +271,30 @@ func (e *RLEnv) InferSolverAction() []int {
 		s := snap[li]
 		n := len(l.Stations)
 		isLoop := l.Active && n > 2 && l.Stations[0] == l.Stations[n-1]
+
+		// Swap endpoint? (same length but a head/tail changed)
+		// Must be checked before add/remove to avoid misclassifying a swap
+		// as one remove + one add, which would corrupt BC labels.
+		if len(l.Stations) == len(s.stationIDs) && len(s.stationIDs) >= 2 {
+			prevSet := make(map[int]bool, len(s.stationIDs))
+			for _, id := range s.stationIDs {
+				prevSet[id] = true
+			}
+			for _, st := range l.Stations {
+				if !prevSet[st.ID] {
+					// This station is new — a swap occurred.
+					si, ok := stIDToIdx[st.ID]
+					if !ok {
+						continue
+					}
+					atHead := 0
+					if len(l.Stations) > 0 && l.Stations[0].ID == st.ID {
+						atHead = 1
+					}
+					actions = append(actions, []int{ActSwapEndpoint, li, si, atHead})
+				}
+			}
+		}
 
 		// Station(s) added?
 		if len(l.Stations) > len(s.stationIDs) {

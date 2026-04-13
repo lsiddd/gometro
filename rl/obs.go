@@ -151,6 +151,24 @@ func BuildObservation(env *RLEnv) []float32 {
 	//   3: pax ratio    4: overcrowd     5: is_interchange
 	//   6: is_valid     7: lines through 8: centrality
 	//   9-15: passenger demand by type (Circle..Cross) / capacity
+
+	// Build station-ID → line-count map once (O(L×S)) rather than recomputing
+	// it inside the per-station loop (was O(S×L×S)).
+	stationLineCnt := make(map[int]int, len(gs.Stations))
+	for l := 0; l < gs.AvailableLines && l < len(gs.Lines); l++ {
+		line := gs.Lines[l]
+		if !line.Active || line.MarkedForDeletion {
+			continue
+		}
+		seen := make(map[int]bool, len(line.Stations))
+		for _, ls := range line.Stations {
+			if !seen[ls.ID] {
+				stationLineCnt[ls.ID]++
+				seen[ls.ID] = true
+			}
+		}
+	}
+
 	cityCfg := config.Cities[gs.SelectedCity]
 	for s := 0; s < MaxStationSlots; s++ {
 		base := i + s*StationDim
@@ -161,20 +179,7 @@ func BuildObservation(env *RLEnv) []float32 {
 		cap := st.Capacity(cityCfg.StationCapacity)
 		fcap := float32(cap)
 
-		// Lines through this station.
-		linesThr := 0
-		for l := 0; l < gs.AvailableLines && l < len(gs.Lines); l++ {
-			line := gs.Lines[l]
-			if !line.Active || line.MarkedForDeletion {
-				continue
-			}
-			for _, ls := range line.Stations {
-				if ls == st {
-					linesThr++
-					break
-				}
-			}
-		}
+		linesThr := stationLineCnt[st.ID]
 
 		// Passenger demand breakdown by destination type.
 		var demand [numStationTypes]float32
@@ -199,7 +204,11 @@ func BuildObservation(env *RLEnv) []float32 {
 		obs[base+1] = float32(st.Y) / systems.SimScreenHeight
 		obs[base+2] = float32(typeIdx) / float32(numStationTypes-1)
 		obs[base+3] = clamp01(float32(len(st.Passengers)) / fcap)
-		obs[base+4] = clamp01(float32(st.OvercrowdProgress) / config.OvercrowdTime)
+		effectiveOCLimit := float32(config.OvercrowdTime)
+		if st.OvercrowdIsGrace {
+			effectiveOCLimit += config.OvercrowdGraceExtra
+		}
+		obs[base+4] = clamp01(float32(st.OvercrowdProgress) / effectiveOCLimit)
 		if st.IsInterchange {
 			obs[base+5] = 1
 		}

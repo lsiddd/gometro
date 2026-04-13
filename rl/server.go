@@ -81,7 +81,7 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 	if city == "" {
 		city = "london"
 	}
-	obs, mask := s.env.Reset(city)
+	obs, mask := s.env.Reset(city, 1.0)
 	writeJSON(w, resetResp{Obs: obs, Mask: mask})
 }
 
