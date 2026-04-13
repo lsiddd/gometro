@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package rl;
+
+option go_package = "minimetro-go/rl/proto";
+
+// RLEnv exposes a single Mini Metro game instance for RL training.
+//
+// Typical usage per worker:
+//   1. Call Info() once at startup to validate constants.
+//   2. Call Reset() to begin an episode and receive the first observation.
+//   3. Open a RunEpisode stream: send ActionRequests, receive StepResponses
+//      until done=true.  Then call Reset() again for the next episode.
+service RLEnv {
+  // Info returns environment constants for startup validation.
+  rpc Info(Empty) returns (InfoResponse) {}
+
+  // Reset starts a new episode and returns the initial observation.
+  rpc Reset(ResetRequest) returns (ResetResponse) {}
+
+  // RunEpisode is a bidirectional stream for the inner training loop.
+  // The client sends one ActionRequest per step; the server replies with
+  // one StepResponse.  The stream stays open across steps within one episode.
+  // When done=true in a StepResponse, call Reset() to begin the next episode
+  // (the stream can be reused — send the next action after Reset returns).
+  rpc RunEpisode(stream ActionRequest) returns (stream StepResponse) {}
+
+  // SolverAct returns the action the heuristic solver would take in the
+  // current state without advancing the simulation.
+  rpc SolverAct(Empty) returns (ActionResponse) {}
+}
+
+message Empty {}
+
+// ── Info ─────────────────────────────────────────────────────────────────────
+
+message InfoResponse {
+  int32 obs_dim      = 1;
+  repeated int32 action_dims = 2;
+  int32 global_dim   = 3;
+  int32 station_dim  = 4;
+  int32 num_stations = 5;
+  int32 line_dim     = 6;
+  int32 num_lines    = 7;
+}
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+
+message ResetRequest {
+  string city = 1;
+  // spawn_rate_factor scales the passenger and station spawn intervals.
+  // Values > 1.0 slow spawning (easier); 1.0 = normal difficulty.
+  // Used by curriculum learning: the Python side increases this at episode
+  // reset when the agent has not yet mastered the current level.
+  float spawn_rate_factor = 2;
+}
+
+message ResetResponse {
+  // Float32 observation vector of length obs_dim, packed.
+  repeated float obs  = 1 [packed = true];
+  // Boolean action mask of length sum(action_dims), one bool per element.
+  repeated bool  mask = 2 [packed = true];
+}
+
+// ── RunEpisode ────────────────────────────────────────────────────────────────
+
+message ActionRequest {
+  // Four-element MultiDiscrete action: [act_cat, line_idx, station_idx, opt].
+  repeated int32 action = 1 [packed = true];
+}
+
+message StepResponse {
+  repeated float obs  = 1 [packed = true];
+  repeated bool  mask = 2 [packed = true];
+  double reward       = 3;
+  bool   done         = 4;
+  // Info fields (subset of the JSON /step info map).
+  int32  score                 = 5;
+  int32  passengers_delivered  = 6;
+  int32  week                  = 7;
+  int32  stations              = 8;
+  bool   game_over             = 9;
+  bool   in_upgrade_modal      = 10;
+}
+
+// ── SolverAct ─────────────────────────────────────────────────────────────────
+
+message ActionResponse {
+  repeated int32 action = 1 [packed = true];
+}

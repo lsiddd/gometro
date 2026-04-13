@@ -12,9 +12,17 @@ dependencies = [
     "stable-baselines3>=2.8.0",
     "tensorboard>=2.20.0",
     "tqdm>=4.67.3",
+    "onnx>=1.16",
+    "onnxruntime>=1.19",
+    "onnxscript>=0.6.2",
+    "grpcio>=1.80.0",
+    "grpcio-tools>=1.80.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
