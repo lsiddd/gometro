@@ -37,6 +37,11 @@ type GameState struct {
 	CameraZoom            float64
 	SimTimeMs             float64
 	GraphDirty            bool
+	// SpawnRateFactor is a curriculum-learning multiplier applied to both the
+	// passenger and station spawn intervals. Values > 1.0 stretch the interval
+	// (slower spawning, easier game); 1.0 = normal difficulty. Set at episode
+	// reset by the Python training loop via the ResetRequest proto field.
+	SpawnRateFactor float64
 }
 
 // AddStation appends station to the game and increments the ID counter.
@@ -103,4 +108,5 @@ func (gs *GameState) Reset() {
 	gs.CameraZoom = 1.0
 	gs.SimTimeMs = 0.0
 	gs.GraphDirty = true
+	gs.SpawnRateFactor = 1.0
 }

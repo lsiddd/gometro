@@ -174,8 +174,12 @@ func (g *Game) Update(gs *state.GameState, deltaTime, screenWidth, screenHeight 
 
 func (g *Game) updateSpawning(gs *state.GameState, screenWidth, screenHeight, nowMs float64) {
 	difficultyMultiplier := math.Pow(config.DifficultyScaleFactor, float64(gs.Week-1))
-	currentSpawnRate := config.BaseSpawnRate * difficultyMultiplier
-	currentStationSpawnRate := config.BaseStationSpawnRate * difficultyMultiplier
+	curriculumFactor := gs.SpawnRateFactor
+	if curriculumFactor <= 0 {
+		curriculumFactor = 1.0
+	}
+	currentSpawnRate := config.BaseSpawnRate * difficultyMultiplier * curriculumFactor
+	currentStationSpawnRate := config.BaseStationSpawnRate * difficultyMultiplier * curriculumFactor
 
 	if nowMs-gs.LastSpawnTime > currentSpawnRate/gs.Speed {
 		g.SpawnPassenger(gs, nowMs)

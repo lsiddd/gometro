@@ -219,6 +219,7 @@ func (gs *GameState) DeepCopy() *GameState {
 		GameStartTime:        gs.GameStartTime,
 		CameraZoom:           gs.CameraZoom,
 		SimTimeMs:            gs.SimTimeMs,
+		SpawnRateFactor:      gs.SpawnRateFactor,
 		GraphDirty:           true, // force rebuild with new pointer set
 		Rivers:               gs.Rivers, // immutable — safe to share
 		Stations:             newStations,
