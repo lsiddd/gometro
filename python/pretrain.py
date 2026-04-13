@@ -25,7 +25,6 @@ import os
 import time
 
 import numpy as np
-import requests
 import torch
 import torch.nn.functional as F
 from sb3_contrib import MaskablePPO
@@ -35,6 +34,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from constants import ACTION_DIMS, PRETRAIN_BASE_PORT
 from env import MiniMetroEnv
 from models import MetroFeatureExtractor
+from rl.proto import minimetro_pb2 as pb
 
 BASE_PORT    = PRETRAIN_BASE_PORT
 CHECKPOINT_DIR = "checkpoints"
@@ -60,12 +60,10 @@ def collect_demos(city: str, n_episodes: int, port: int) -> tuple[np.ndarray, np
             done = False
             ep_steps = 0
             while not done:
-                # Get solver action from the /solver_act endpoint.
+                # Get solver action via gRPC SolverAct RPC.
                 try:
-                    resp = requests.get(
-                        f"http://localhost:{port}/solver_act", timeout=5
-                    )
-                    action = resp.json()["action"]
+                    action_resp = env._stub.SolverAct(pb.Empty(), timeout=5)
+                    action = list(action_resp.action)
                 except Exception:
                     action = [0, 0, 0, 0]
 

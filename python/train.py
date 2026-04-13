@@ -23,6 +23,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 from constants import TRAIN_BASE_PORT
 from env import MiniMetroEnv
 from models import MetroFeatureExtractor
+from policy import MetroPolicy
 
 BASE_PORT = TRAIN_BASE_PORT
 CHECKPOINT_DIR = "checkpoints"
@@ -39,20 +40,127 @@ LR_END         = 1e-5
 LR_DECAY_STEPS = 10_000_000
 
 
-def linear_lr_schedule(progress_remaining: float) -> float:
-    """Callable passed to MaskablePPO as learning_rate.
+class LinearLRSchedule:
+    """LR schedule that decays linearly from LR_START to LR_END over
+    LR_DECAY_STEPS total environment steps, then holds at LR_END.
 
-    SB3 calls this with progress_remaining ∈ [1.0, 0.0] where 1.0 is the
-    start and 0.0 is total_timesteps. We map it to a linear decay from
-    LR_START to LR_END over LR_DECAY_STEPS, then hold at LR_END.
+    Uses model.num_timesteps directly so it works correctly across multiple
+    model.learn() chunks (where progress_remaining resets each chunk).
+    Call `schedule.bind(model)` after model creation.
     """
-    # progress_remaining goes 1→0 over total_timesteps (sys.maxsize here).
-    # We approximate the "fraction done" as 1 - progress_remaining, clamped.
-    frac_done = min(1.0 - progress_remaining, 1.0)
-    # Scale so the full decay happens over LR_DECAY_STEPS, not sys.maxsize.
-    decay_frac = min(frac_done * sys.maxsize / LR_DECAY_STEPS, 1.0)
-    lr = LR_START + decay_frac * (LR_END - LR_START)
-    return float(np.clip(lr, LR_END, LR_START))
+
+    def __init__(self):
+        self._model = None
+
+    def bind(self, model) -> "LinearLRSchedule":
+        self._model = model
+        return self
+
+    # Exclude the model reference from pickling (the model holds SubprocVecEnv
+    # which contains AuthenticationString objects that cannot be serialised).
+    # After loading a checkpoint, call bind(model) again to restore the link.
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        state["_model"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+
+    def __call__(self, _progress_remaining: float) -> float:
+        steps = self._model.num_timesteps if self._model is not None else 0
+        decay_frac = min(steps / LR_DECAY_STEPS, 1.0)
+        lr = LR_START + decay_frac * (LR_END - LR_START)
+        return float(np.clip(lr, LR_END, LR_START))
+
+
+lr_schedule = LinearLRSchedule()
+
+
+class CurriculumCallback(BaseCallback):
+    """Adjusts spawn-rate difficulty across all training environments based on
+    recent episode survival.
+
+    Difficulty is expressed as a ``spawn_rate_factor`` passed to the Go server
+    on each episode reset: values > 1.0 stretch spawn intervals (fewer
+    passengers per minute), making the game easier.
+
+    Schedule (index 0 = easiest):
+        [4.0, 3.0, 2.0, 1.5, 1.25, 1.0]
+
+    Promotion rule: rolling mean weeks survived over the last ``window``
+    completed episodes exceeds ``promote_threshold``  → advance one level.
+    Demotion rule:  rolling mean falls below ``demote_threshold`` → retreat one
+    level (floor = 0, ceiling = last index = normal difficulty).
+    """
+
+    SCHEDULE: list[float] = [4.0, 3.0, 2.0, 1.5, 1.25, 1.0]
+
+    def __init__(
+        self,
+        vec_env,
+        window: int = 50,
+        promote_threshold: float = 10.0,
+        demote_threshold: float = 4.0,
+        verbose: int = 1,
+    ):
+        super().__init__(verbose)
+        self._vec_env = vec_env
+        self._window = window
+        self._promote = promote_threshold
+        self._demote = demote_threshold
+        self._level = 0                   # index into SCHEDULE; 0 = easiest
+        self._episode_weeks: list[float] = []
+        self._set_difficulty(self._level)
+
+    # ── SB3 callback interface ────────────────────────────────────────────────
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        dones = self.locals.get("dones", [])
+        for done, info in zip(dones, infos):
+            if done:
+                self._episode_weeks.append(float(info.get("week", 0)))
+
+        if len(self._episode_weeks) >= self._window:
+            self._episode_weeks = self._episode_weeks[-self._window:]
+            mean_weeks = float(np.mean(self._episode_weeks))
+            self.logger.record("curriculum/mean_weeks_survived", mean_weeks)
+            self.logger.record("curriculum/level", self._level)
+            self.logger.record(
+                "curriculum/spawn_rate_factor", self.SCHEDULE[self._level]
+            )
+
+            prev_level = self._level
+            max_level = len(self.SCHEDULE) - 1
+
+            if mean_weeks >= self._promote and self._level < max_level:
+                self._level += 1
+                self._episode_weeks.clear()
+                if self.verbose:
+                    print(
+                        f"[curriculum] ↑ level {prev_level}→{self._level}  "
+                        f"(factor={self.SCHEDULE[self._level]:.2f}  "
+                        f"mean_weeks={mean_weeks:.1f})"
+                    )
+                self._set_difficulty(self._level)
+
+            elif mean_weeks < self._demote and self._level > 0:
+                self._level -= 1
+                self._episode_weeks.clear()
+                if self.verbose:
+                    print(
+                        f"[curriculum] ↓ level {prev_level}→{self._level}  "
+                        f"(factor={self.SCHEDULE[self._level]:.2f}  "
+                        f"mean_weeks={mean_weeks:.1f})"
+                    )
+                self._set_difficulty(self._level)
+
+        return True
+
+    def _set_difficulty(self, level: int) -> None:
+        factor = self.SCHEDULE[level]
+        self._vec_env.env_method("set_difficulty", factor)
 
 
 class SolverBaselineCallback(BaseCallback):
@@ -79,7 +187,7 @@ class SolverBaselineCallback(BaseCallback):
         return True
 
     def _run_solver_baseline(self) -> None:
-        import requests
+        from rl.proto import minimetro_pb2 as pb
 
         scores = []
         for ep in range(self.n_episodes):
@@ -89,12 +197,9 @@ class SolverBaselineCallback(BaseCallback):
                 obs, _ = env.reset()
                 done = False
                 while not done:
-                    # Ask the server for the solver's preferred action.
                     try:
-                        resp = requests.get(
-                            f"http://localhost:{port}/solver_act", timeout=5
-                        )
-                        action = resp.json()["action"]
+                        action_resp = env._stub.SolverAct(pb.Empty(), timeout=5)
+                        action = list(action_resp.action)
                     except Exception:
                         action = [0, 0, 0, 0]  # fallback NoOp
                     obs, _, done, _, info = env.step(np.array(action))
@@ -130,20 +235,20 @@ def train(args: argparse.Namespace):
         print(f"Resuming from {args.resume}")
         model = MaskablePPO.load(
             args.resume, env=vec_env, tensorboard_log=LOG_DIR,
-            learning_rate=linear_lr_schedule,
+            learning_rate=lr_schedule,
             verbose=1,
         )
     else:
         model = MaskablePPO(
-            "MlpPolicy",
+            MetroPolicy,
             vec_env,
-            n_steps=4096,       # was 2048 — more data per update
-            batch_size=512,     # was 256
+            n_steps=16384,
+            batch_size=2048,
             n_epochs=10,
-            gamma=0.995,
+            gamma=0.99,         # was 0.995 — shorter effective horizon speeds early credit assignment
             gae_lambda=0.95,
-            learning_rate=linear_lr_schedule,
-            ent_coef=0.01,
+            learning_rate=lr_schedule,
+            ent_coef=0.05,      # was 0.01 — more exploration in large MultiDiscrete space
             clip_range=0.2,
             max_grad_norm=0.5,
             tensorboard_log=LOG_DIR,
@@ -153,10 +258,13 @@ def train(args: argparse.Namespace):
             },
             verbose=1,
         )
+    lr_schedule.bind(model)
 
     # Solver baseline runs on ports after training + eval envs.
     solver_port_offset = n + 2
     callbacks = [
+        CurriculumCallback(vec_env, window=50, promote_threshold=10.0,
+                           demote_threshold=4.0, verbose=1),
         CheckpointCallback(
             save_freq=max(CHECKPOINT_FREQ // n, 1),
             save_path=CHECKPOINT_DIR,
@@ -218,7 +326,7 @@ def train(args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n-envs", type=int, default=8)
+    parser.add_argument("--n-envs", type=int, default=16)
     parser.add_argument("--city", type=str, default="london")
     parser.add_argument("--resume", type=str, default="",
                         help="Path to a checkpoint .zip to continue training from")

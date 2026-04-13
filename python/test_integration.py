@@ -18,10 +18,10 @@ import time
 
 import numpy as np
 import pytest
-import requests
 
 from constants import OBS_DIM, ACTION_DIMS
 from env import MiniMetroEnv
+from rl.proto import minimetro_pb2 as pb
 
 _BINARY = os.path.join(os.path.dirname(__file__), "..", "rl_server")
 _BASE_PORT = 18700  # well outside the default training range
@@ -47,28 +47,22 @@ def env():
     e.close()
 
 
-# ── /info validation ──────────────────────────────────────────────────────────
+# ── Info validation ───────────────────────────────────────────────────────────
 
 @skip_no_binary
 def test_info_obs_dim_matches_constants(env):
-    """Server-reported obs_dim must match OBS_DIM in constants.py.
-
-    Uses the env fixture to ensure the server is running before the request.
-    """
-    resp = requests.get(f"http://localhost:{_BASE_PORT}/info", timeout=5)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["obs_dim"] == OBS_DIM, (
-        f"server obs_dim={data['obs_dim']} != constants.OBS_DIM={OBS_DIM}"
+    """Server-reported obs_dim must match OBS_DIM in constants.py."""
+    info = env._stub.Info(pb.Empty(), timeout=5)
+    assert info.obs_dim == OBS_DIM, (
+        f"server obs_dim={info.obs_dim} != constants.OBS_DIM={OBS_DIM}"
     )
 
 
 @skip_no_binary
 def test_info_action_dims_match_constants(env):
-    resp = requests.get(f"http://localhost:{_BASE_PORT}/info", timeout=5)
-    data = resp.json()
-    assert data["action_dims"] == list(ACTION_DIMS), (
-        f"server action_dims={data['action_dims']} != constants.ACTION_DIMS={list(ACTION_DIMS)}"
+    info = env._stub.Info(pb.Empty(), timeout=5)
+    assert list(info.action_dims) == list(ACTION_DIMS), (
+        f"server action_dims={list(info.action_dims)} != constants.ACTION_DIMS={list(ACTION_DIMS)}"
     )
 
 
