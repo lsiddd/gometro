@@ -4,14 +4,14 @@ ckpt_dir   := python_dir / "checkpoints"
 tb_port    := "6006"
 tb_pid     := "/tmp/minimetro_tb.pid"
 
-n_envs     := "8"
+n_envs     := "12"
 city       := "london"
 checkpoint := ""
 
 # compile all Go binaries
 build:
 	go build -o minimetro .
-	go build -o {{binary}} ./cmd/rl_server/
+	go build -tags headless -o {{binary}} ./cmd/rl_server/
 
 # build, start TensorBoard, then train from scratch
 train: build _kill-servers

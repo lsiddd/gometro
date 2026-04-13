@@ -35,5 +35,12 @@ Thumbs.db
 *npz
 tb_logs
 *pyc
-rl_server
+__pycache__/
+*.onnx
+*.pt
+*.pth
+python/.venv/
 minimetro
+
+/rl_server
+!/rl_server/
