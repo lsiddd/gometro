@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 )
 
 // Server wraps a single RLEnv and exposes it via a JSON HTTP API that mirrors
@@ -18,6 +19,7 @@ import (
 type Server struct {
 	env *RLEnv
 	mux *http.ServeMux
+	mu  sync.Mutex // serialises access to env across concurrent HTTP goroutines
 }
 
 func NewServer() *Server {
@@ -81,7 +83,9 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 	if city == "" {
 		city = "london"
 	}
+	s.mu.Lock()
 	obs, mask := s.env.Reset(city, 1.0)
+	s.mu.Unlock()
 	writeJSON(w, resetResp{Obs: obs, Mask: mask})
 }
 
@@ -107,17 +111,21 @@ func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.mu.Lock()
 	obs, reward, done, mask := s.env.Step(req.Action)
+	info := s.env.Info()
+	score := s.env.gs.Score
+	delivered := s.env.gs.PassengersDelivered
+	s.mu.Unlock()
 	writeJSON(w, stepResp{
 		Obs:    obs,
 		Reward: reward,
 		Done:   done,
 		Mask:   mask,
-		Info:   s.env.Info(),
+		Info:   info,
 	})
 	if done {
-		log.Printf("[RL] Episode ended — score=%d passengers=%d",
-			s.env.gs.Score, s.env.gs.PassengersDelivered)
+		log.Printf("[RL] Episode ended — score=%d passengers=%d", score, delivered)
 	}
 }
 
@@ -134,7 +142,9 @@ func (s *Server) handleSolverAct(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
 		return
 	}
+	s.mu.Lock()
 	action := s.env.InferSolverAction()
+	s.mu.Unlock()
 	writeJSON(w, solverActResp{Action: action})
 }
 

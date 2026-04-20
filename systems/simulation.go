@@ -2,7 +2,6 @@ package systems
 
 import (
 	"minimetro-go/state"
-	"minimetro-go/systems/graph"
 )
 
 const (
@@ -30,10 +29,8 @@ func Rollout(gs *state.GameState, frames int) *state.GameState {
 
 	// Each rollout gets its own Game + GraphManager so concurrent SA goroutines
 	// never share mutable caches.
-	localGame := &Game{
-		Initialized:  true,
-		GraphManager: graph.NewGraphManager(),
-	}
+	localGame := NewGame()
+	localGame.Initialized = true
 
 	now := cp.SimTimeMs
 	for i := 0; i < frames; i++ {

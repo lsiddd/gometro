@@ -13,12 +13,20 @@ import (
 type Game struct {
 	Initialized  bool
 	GraphManager *graph.GraphManager
+
+	// Pre-allocated buffers for hot-path update functions; reused every frame
+	// to avoid heap allocations inside the 60 Hz simulation loop.
+	trainSnapshot  []*components.Train
+	gracedStations map[*components.Station]bool
+	incomingTrains map[*components.Station][]*components.Train
 }
 
 func NewGame() *Game {
 	return &Game{
-		Initialized:  false,
-		GraphManager: graph.NewGraphManager(),
+		Initialized:    false,
+		GraphManager:   graph.NewGraphManager(),
+		gracedStations: make(map[*components.Station]bool),
+		incomingTrains: make(map[*components.Station][]*components.Train),
 	}
 }
 
@@ -195,19 +203,32 @@ func (g *Game) updateSpawning(gs *state.GameState, screenWidth, screenHeight, no
 func (g *Game) updateOvercrowding(gs *state.GameState, deltaTime float64) {
 	cityCfg := config.Cities[gs.SelectedCity]
 
-	// Pre-compute the set of stations with an incoming moving train (grace period).
-	// O(T) once instead of O(S×T) via an inner loop per station.
-	gracedStations := make(map[*components.Station]bool, len(gs.Trains))
+	// Pre-compute the set of stations with an incoming moving train that can
+	// actually relieve them (has capacity OR will drop off a passenger there).
+	// A full train passing through grants no real relief; excluding it prevents
+	// exploit loops where the RL agent circles loaded trains to suppress overcrowd.
+	clear(g.gracedStations)
 	for _, t := range gs.Trains {
 		if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving &&
 			t.NextStationIndex < len(t.Line.Stations) {
-			gracedStations[t.Line.Stations[t.NextStationIndex]] = true
+			nextSt := t.Line.Stations[t.NextStationIndex]
+			hasCapacity := len(t.Passengers)+t.ReservedSeats < t.TotalCapacity()
+			willAlight := false
+			for _, p := range t.Passengers {
+				if p.Destination == nextSt.Type {
+					willAlight = true
+					break
+				}
+			}
+			if hasCapacity || willAlight {
+				g.gracedStations[nextSt] = true
+			}
 		}
 	}
 
 	for _, s := range gs.Stations {
 		cap := s.Capacity(cityCfg.StationCapacity)
-		s.OvercrowdIsGrace = gracedStations[s]
+		s.OvercrowdIsGrace = g.gracedStations[s]
 
 		if len(s.Passengers) > cap {
 			s.OvercrowdProgress += deltaTime * gs.Speed
@@ -231,12 +252,12 @@ func (g *Game) updatePassengerReservations(gs *state.GameState, nowMs float64) {
 
 	// Pre-compute: station → trains arriving next tick.
 	// Reduces the per-passenger train scan from O(T) to O(1) lookup.
-	incomingTrains := make(map[*components.Station][]*components.Train, len(gs.Stations))
+	clear(g.incomingTrains)
 	for _, t := range gs.Trains {
 		if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving &&
 			t.NextStationIndex < len(t.Line.Stations) {
 			nextSt := t.Line.Stations[t.NextStationIndex]
-			incomingTrains[nextSt] = append(incomingTrains[nextSt], t)
+			g.incomingTrains[nextSt] = append(g.incomingTrains[nextSt], t)
 		}
 	}
 
@@ -246,7 +267,7 @@ func (g *Game) updatePassengerReservations(gs *state.GameState, nowMs float64) {
 		}
 
 		var bestTrain *components.Train
-		for _, t := range incomingTrains[p.CurrentStation] {
+		for _, t := range g.incomingTrains[p.CurrentStation] {
 			if t.TotalCapacity()-len(t.Passengers)-t.ReservedSeats > 0 {
 				upcoming := t.GetUpcomingStops(p.CurrentStation, true)
 				if canBoard(g.GraphManager, gs, p, upcoming, nowMs) {
@@ -279,9 +300,8 @@ func (g *Game) updateTrains(gs *state.GameState, deltaTime, nowMs float64) {
 	// Snapshot the slice before iterating: UpdateTrain may call gs.RemoveTrain,
 	// which calls slices.Delete and zeroes the tail of gs.Trains. Iterating the
 	// original range would then dereference nil entries at the zeroed positions.
-	snapshot := make([]*components.Train, len(gs.Trains))
-	copy(snapshot, gs.Trains)
-	for _, train := range snapshot {
+	g.trainSnapshot = append(g.trainSnapshot[:0], gs.Trains...)
+	for _, train := range g.trainSnapshot {
 		if train != nil {
 			g.UpdateTrain(train, gs, deltaTime, nowMs)
 		}
@@ -326,6 +346,30 @@ func (g *Game) UpdateTrain(t *components.Train, gs *state.GameState, deltaTime, 
 	}
 
 	if t.State == components.TrainWaiting {
+		// Line was deleted while the train was docked: eject passengers to the
+		// current station immediately rather than waiting for the next arrival.
+		if t.Line.MarkedForDeletion {
+			var currentStation *components.Station
+			if t.CurrentStationIndex < len(t.Line.Stations) {
+				currentStation = t.Line.Stations[t.CurrentStationIndex]
+			}
+			for _, p := range t.Passengers {
+				p.OnTrain = nil
+				if currentStation != nil {
+					p.CurrentStation = currentStation
+					p.WaitStartTime = nowMs
+					if !currentStation.IsInterchange {
+						p.WaitStartTime += float64(config.RegularTransferTime - config.InterchangeTransferTime)
+					}
+					currentStation.AddPassenger(p, nowMs)
+				} else {
+					gs.RemovePassenger(p)
+				}
+			}
+			t.Passengers = nil
+			gs.RemoveTrain(t)
+			return
+		}
 		t.WaitTimer -= deltaTime
 		if t.WaitTimer <= 0 {
 			t.State = components.TrainMoving
@@ -571,14 +615,6 @@ func (g *Game) shouldAlightPassenger(t *components.Train, p *components.Passenge
 		nextStop := p.Path[p.PathIndex]
 		upcoming := t.GetUpcomingStops(station, true)
 
-		// If the train can deliver the passenger directly (visits destination type),
-		// there is no reason to transfer here — stay on board.
-		for _, u := range upcoming {
-			if u.Type == p.Destination {
-				return false
-			}
-		}
-
 		hasNext := false
 		for _, u := range upcoming {
 			if u == nextStop {
@@ -667,56 +703,70 @@ func (g *Game) SpawnStation(gs *state.GameState, screenWidth, screenHeight float
 	}
 
 	margin := 80.0
-	minDistance := 120.0
-	maxAttempts := 500
 
-	for i := 0; i < maxAttempts; i++ {
-		var x, y float64
-		if isSpecial {
-			edge := rand.Intn(4)
-			borderDepth := 0.25
-			switch edge {
-			case 0: // top
-				x = margin + rand.Float64()*(screenWidth-2*margin)
-				y = margin + rand.Float64()*screenHeight*borderDepth
-			case 1: // right
-				x = screenWidth - margin - rand.Float64()*screenWidth*borderDepth
-				y = margin + rand.Float64()*(screenHeight-2*margin)
-			case 2: // bottom
-				x = margin + rand.Float64()*(screenWidth-2*margin)
-				y = screenHeight - margin - rand.Float64()*screenHeight*borderDepth
-			case 3: // left
-				x = margin + rand.Float64()*screenWidth*borderDepth
-				y = margin + rand.Float64()*(screenHeight-2*margin)
+	tryPlace := func(minDist float64, attempts int) bool {
+		for i := 0; i < attempts; i++ {
+			var x, y float64
+			if isSpecial {
+				edge := rand.Intn(4)
+				borderDepth := 0.25
+				switch edge {
+				case 0:
+					x = margin + rand.Float64()*(screenWidth-2*margin)
+					y = margin + rand.Float64()*screenHeight*borderDepth
+				case 1:
+					x = screenWidth - margin - rand.Float64()*screenWidth*borderDepth
+					y = margin + rand.Float64()*(screenHeight-2*margin)
+				case 2:
+					x = margin + rand.Float64()*(screenWidth-2*margin)
+					y = screenHeight - margin - rand.Float64()*screenHeight*borderDepth
+				case 3:
+					x = margin + rand.Float64()*screenWidth*borderDepth
+					y = margin + rand.Float64()*(screenHeight-2*margin)
+				}
+			} else {
+				x = margin + rand.Float64()*(screenWidth-margin*2)
+				y = margin + rand.Float64()*(screenHeight-margin*2)
 			}
-		} else {
-			x = margin + rand.Float64()*(screenWidth-margin*2)
-			y = margin + rand.Float64()*(screenHeight-margin*2)
-		}
 
-		tooClose := false
-		for _, s := range gs.Stations {
-			if math.Hypot(s.X-x, s.Y-y) < minDistance {
-				tooClose = true
-				break
+			tooClose := false
+			for _, s := range gs.Stations {
+				if math.Hypot(s.X-x, s.Y-y) < minDist {
+					tooClose = true
+					break
+				}
+			}
+
+			inRiver := false
+			for _, river := range gs.Rivers {
+				if river.Contains(x, y) {
+					inRiver = true
+					break
+				}
+			}
+
+			if !tooClose && !inRiver {
+				st := components.NewStation(gs.StationIDCounter, x, y, stationType)
+				gs.AddStation(st)
+				log.Printf("[Game] Station spawned: id=%d type=%s pos=(%.0f,%.0f) dist=%.0f total=%d",
+					st.ID, stationType, x, y, minDist, len(gs.Stations))
+				return true
 			}
 		}
+		return false
+	}
 
-		inRiver := false
-		for _, river := range gs.Rivers {
-			if river.Contains(x, y) {
-				inRiver = true
-				break
-			}
-		}
-
-		if !tooClose && !inRiver {
-			st := components.NewStation(gs.StationIDCounter, x, y, stationType)
-			gs.AddStation(st)
-			log.Printf("[Game] Station spawned: id=%d type=%s pos=(%.0f,%.0f) total=%d", st.ID, stationType, x, y, len(gs.Stations))
+	if tryPlace(120.0, 500) {
+		return
+	}
+	// Fallback: progressively relax minDistance when the map is dense.
+	// Mirrors the placeFallbackStation behaviour used during init.
+	for _, dist := range []float64{80.0, 50.0} {
+		if tryPlace(dist, 200) {
 			return
 		}
 	}
+	log.Printf("[Game] SpawnStation: map saturated, skipping spawn for type=%s", stationType)
 }
 
 func (g *Game) getNewStationType(gs *state.GameState, nowMs float64) config.StationType {
