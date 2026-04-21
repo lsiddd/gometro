@@ -18,7 +18,6 @@ type MinimetroGame struct {
 	Renderer     *rendering.GameRenderer
 	UI           *systems.UI
 	InputHandler *systems.InputHandler
-	Solver       *systems.Solver
 	RLClient     *rl.Client // non-nil when --rl-client flag is set
 	screenW      int
 	screenH      int
@@ -42,17 +41,12 @@ func (m *MinimetroGame) Update() error {
 	return nil
 }
 
-// tickDelta returns the effective milliseconds for this frame, scaled by the
-// current fast-forward factor. Uses a fixed 60 Hz base so physics are stable
-// regardless of actual TPS (which can fluctuate or be 0 on some platforms).
 func (m *MinimetroGame) tickDelta() float64 {
 	const baseMs = 1000.0 / 60.0
 	ffFactors := [3]float64{1, 2, 4}
 	return baseMs * ffFactors[m.GameState.FastForward]
 }
 
-// handleInput polls Ebitengine for the current input state, updates the
-// InputHandler, and logs click events for debugging.
 func (m *MinimetroGame) handleInput() {
 	x, y := ebiten.CursorPosition()
 	worldX, worldY := float64(x), float64(y)
@@ -76,8 +70,6 @@ func (m *MinimetroGame) handleInput() {
 	}
 }
 
-// tickSimulation advances the game engine by one frame and handles the events
-// it returns ("show_upgrades" or "game_over").
 func (m *MinimetroGame) tickSimulation(effectiveDelta float64) {
 	result := m.GameSystem.Update(m.GameState, effectiveDelta, m.UI.Width, m.UI.Height, m.GameState.SimTimeMs)
 	switch result {
@@ -86,9 +78,6 @@ func (m *MinimetroGame) tickSimulation(effectiveDelta float64) {
 		m.UI.UpgradeChoices = m.GameSystem.GenerateUpgradeChoices(m.GameState)
 		if m.RLClient != nil {
 			m.RLClient.Update(m.GameState, m.GameSystem, m.GameState.SimTimeMs, m.UI.UpgradeChoices)
-		} else if m.Solver.Enabled {
-			chosen := m.Solver.ChooseUpgrade(m.GameState, m.UI.UpgradeChoices)
-			systems.ApplyUpgrade(m.GameState, chosen)
 		} else {
 			m.UI.ShowUpgradeModal = true
 			m.GameState.Paused = true
@@ -99,14 +88,9 @@ func (m *MinimetroGame) tickSimulation(effectiveDelta float64) {
 	}
 }
 
-// tickAI runs whichever agent is active: the remote RL client or the local
-// heuristic solver. The two are mutually exclusive (solver is disabled when
-// RLClient is set).
 func (m *MinimetroGame) tickAI() {
 	if m.RLClient != nil {
 		m.RLClient.Update(m.GameState, m.GameSystem, m.GameState.SimTimeMs, nil)
-	} else {
-		m.Solver.Update(m.GameState, m.GameSystem.GraphManager, m.GameState.SimTimeMs)
 	}
 }
 
@@ -132,7 +116,6 @@ func main() {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 
 	ih := systems.NewInputHandler()
-	solver := systems.NewSolver()
 	ui := systems.NewUI()
 
 	g := &MinimetroGame{
@@ -141,22 +124,12 @@ func main() {
 		Renderer:     rendering.NewGameRenderer(),
 		UI:           ui,
 		InputHandler: ih,
-		Solver:       solver,
 	}
 
 	if *rlClientURL != "" {
 		log.Printf("[main] RL client mode enabled — inference server: %s", *rlClientURL)
 		g.RLClient = rl.NewClient(*rlClientURL)
-		g.Solver.Enabled = false // RL agent takes over
 	}
-
-	// Wire AI toggle: UI signals the intent; main.go owns the solver state.
-	ui.OnAIToggle = func() {
-		g.Solver.Enabled = !g.Solver.Enabled
-		ui.AIEnabled = g.Solver.Enabled
-		log.Printf("[main] AI solver toggled: %v", g.Solver.Enabled)
-	}
-	ui.AIEnabled = solver.Enabled
 
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)

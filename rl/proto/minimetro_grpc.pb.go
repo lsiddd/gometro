@@ -22,7 +22,6 @@ const (
 	RLEnv_Info_FullMethodName       = "/rl.RLEnv/Info"
 	RLEnv_Reset_FullMethodName      = "/rl.RLEnv/Reset"
 	RLEnv_RunEpisode_FullMethodName = "/rl.RLEnv/RunEpisode"
-	RLEnv_SolverAct_FullMethodName  = "/rl.RLEnv/SolverAct"
 )
 
 // RLEnvClient is the client API for RLEnv service.
@@ -47,9 +46,6 @@ type RLEnvClient interface {
 	// When done=true in a StepResponse, call Reset() to begin the next episode
 	// (the stream can be reused — send the next action after Reset returns).
 	RunEpisode(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ActionRequest, StepResponse], error)
-	// SolverAct returns the action the heuristic solver would take in the
-	// current state without advancing the simulation.
-	SolverAct(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ActionResponse, error)
 }
 
 type rLEnvClient struct {
@@ -93,16 +89,6 @@ func (c *rLEnvClient) RunEpisode(ctx context.Context, opts ...grpc.CallOption) (
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RLEnv_RunEpisodeClient = grpc.BidiStreamingClient[ActionRequest, StepResponse]
 
-func (c *rLEnvClient) SolverAct(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ActionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ActionResponse)
-	err := c.cc.Invoke(ctx, RLEnv_SolverAct_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // RLEnvServer is the server API for RLEnv service.
 // All implementations must embed UnimplementedRLEnvServer
 // for forward compatibility.
@@ -125,9 +111,6 @@ type RLEnvServer interface {
 	// When done=true in a StepResponse, call Reset() to begin the next episode
 	// (the stream can be reused — send the next action after Reset returns).
 	RunEpisode(grpc.BidiStreamingServer[ActionRequest, StepResponse]) error
-	// SolverAct returns the action the heuristic solver would take in the
-	// current state without advancing the simulation.
-	SolverAct(context.Context, *Empty) (*ActionResponse, error)
 	mustEmbedUnimplementedRLEnvServer()
 }
 
@@ -146,9 +129,6 @@ func (UnimplementedRLEnvServer) Reset(context.Context, *ResetRequest) (*ResetRes
 }
 func (UnimplementedRLEnvServer) RunEpisode(grpc.BidiStreamingServer[ActionRequest, StepResponse]) error {
 	return status.Error(codes.Unimplemented, "method RunEpisode not implemented")
-}
-func (UnimplementedRLEnvServer) SolverAct(context.Context, *Empty) (*ActionResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SolverAct not implemented")
 }
 func (UnimplementedRLEnvServer) mustEmbedUnimplementedRLEnvServer() {}
 func (UnimplementedRLEnvServer) testEmbeddedByValue()               {}
@@ -214,24 +194,6 @@ func _RLEnv_RunEpisode_Handler(srv interface{}, stream grpc.ServerStream) error 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RLEnv_RunEpisodeServer = grpc.BidiStreamingServer[ActionRequest, StepResponse]
 
-func _RLEnv_SolverAct_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RLEnvServer).SolverAct(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: RLEnv_SolverAct_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RLEnvServer).SolverAct(ctx, req.(*Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // RLEnv_ServiceDesc is the grpc.ServiceDesc for RLEnv service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -246,10 +208,6 @@ var RLEnv_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Reset",
 			Handler:    _RLEnv_Reset_Handler,
-		},
-		{
-			MethodName: "SolverAct",
-			Handler:    _RLEnv_SolverAct_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

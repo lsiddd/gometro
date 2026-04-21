@@ -45,26 +45,6 @@ const (
 	TransferPenalty        = 2.5  // extra score per line change in BFS
 	OvercrowdScoreFactor   = 4.0  // score penalty multiplier for overcrowded intermediate stations
 
-	// Solver timing
-	GhostLineTimeoutMs = 8000 // ms before an unused ghost line is discarded
-
-	// Solver interval timing (milliseconds)
-	SolverEmergencyIntervalMs   = 80.0  // run interval when any station exceeds OvercrowdCriticalThreshold
-	SolverUrgentIntervalMs      = 150.0 // run interval when any station exceeds SolverUrgentOvercrowdFrac
-	SolverUrgentOvercrowdFrac   = 0.6   // overcrowd fraction that triggers the urgent (150 ms) interval
-
-	// Solver upgrade scoring weights
-	SolverIsolatedStationPts    = 25.0 // score per isolated station when evaluating NewLine
-	SolverNewLineOvercrowdWt    = 0.04 // overcrowd progress weight for NewLine
-	SolverNewLineArcWt          = 0.06 // avg arc length weight for NewLine
-	SolverNewLineBase           = 18.0 // baseline score so NewLine is competitive early on
-	SolverCarriageCapWt         = 20.0 // capacity ratio multiplier for Carriage upgrade
-	SolverCarriageOvercrowdWt   = 0.03 // overcrowd progress weight for Carriage upgrade
-	SolverMinCarriageFillRatio  = 0.6  // minimum fill ratio to trigger carriage assignment
-	SolverInterchangeLinesWt    = 8.0  // score per extra line at interchange candidate
-	SolverInterchangeOvercrowdWt = 0.1 // overcrowd weight for interchange score
-	SolverUrgencyOvercrowdWt    = 0.02 // per-station urgency weight in placement scoring
-
 	// Station placement distances (pixels)
 	StationMinDistance = 120.0 // minimum distance between stations at init and spawn
 

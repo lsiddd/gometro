@@ -44,14 +44,3 @@ func Rollout(gs *state.GameState, frames int) *state.GameState {
 	return cp
 }
 
-// Evaluate returns the quality score for a simulated state. Lower is better.
-// It applies a large terminal penalty when the game ended (overcrowding killed
-// a station) so that the SA optimizer strongly avoids topologies that trigger
-// game-over within the rollout window.
-func Evaluate(gs *state.GameState) float64 {
-	const gameOverPenalty = 1e7
-	if gs.GameOver {
-		return gameOverPenalty
-	}
-	return NetworkCost(gs)
-}

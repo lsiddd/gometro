@@ -25,9 +25,6 @@ service RLEnv {
   // (the stream can be reused — send the next action after Reset returns).
   rpc RunEpisode(stream ActionRequest) returns (stream StepResponse) {}
 
-  // SolverAct returns the action the heuristic solver would take in the
-  // current state without advancing the simulation.
-  rpc SolverAct(Empty) returns (ActionResponse) {}
 }
 
 message Empty {}

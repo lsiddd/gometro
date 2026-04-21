@@ -92,13 +92,6 @@ func (s *GRPCService) RunEpisode(stream pb.RLEnv_RunEpisodeServer) error {
 	}
 }
 
-// ── SolverAct ─────────────────────────────────────────────────────────────────
-
-func (s *GRPCService) SolverAct(_ context.Context, _ *pb.Empty) (*pb.ActionResponse, error) {
-	action := s.env.InferSolverAction()
-	return &pb.ActionResponse{Action: intSliceToInt32(action)}, nil
-}
-
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func boolSlice(src []bool) []bool {
@@ -114,10 +107,3 @@ func int32SliceToInt(src []int32) []int {
 	return out
 }
 
-func intSliceToInt32(src []int) []int32 {
-	out := make([]int32, len(src))
-	for i, v := range src {
-		out[i] = int32(v)
-	}
-	return out
-}

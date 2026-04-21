@@ -145,63 +145,6 @@ func TestRollout_PassengersDeliveredIncrease(t *testing.T) {
 	}
 }
 
-// ── Evaluate ─────────────────────────────────────────────────────────────────
-
-func TestEvaluate_GameOverReturnsLargePenalty(t *testing.T) {
-	gs := state.NewGameState()
-	gs.GameOver = true
-
-	score := Evaluate(gs)
-	if score < 1e6 {
-		t.Errorf("game-over state should return very large penalty; got %.0f", score)
-	}
-}
-
-func TestEvaluate_LowerScoreForLessOvercrowding(t *testing.T) {
-	gs1 := newTestGameState()
-	s1 := stationAt(0, 0, 0, config.Circle)
-	s1.OvercrowdProgress = float64(config.OvercrowdTime) * 0.9
-	gs1.Stations = []*components.Station{s1}
-
-	gs2 := newTestGameState()
-	s2 := stationAt(0, 0, 0, config.Circle)
-	s2.OvercrowdProgress = float64(config.OvercrowdTime) * 0.1
-	gs2.Stations = []*components.Station{s2}
-
-	if Evaluate(gs1) <= Evaluate(gs2) {
-		t.Error("higher overcrowding should produce higher (worse) evaluate score")
-	}
-}
-
-func TestEvaluate_BetterTopologyLowerScore(t *testing.T) {
-	// Good topology: alternating types, straight line.
-	goodGs := newTestGameState()
-	a := stationAt(0, 0, 0, config.Circle)
-	b := stationAt(1, 100, 0, config.Triangle)
-	c := stationAt(2, 200, 0, config.Circle)
-	goodLine := newConnectedLine(config.LineColors[0], 0, a, b, c)
-	goodLine.Active = true
-	goodGs.Stations = []*components.Station{a, b, c}
-	goodGs.Lines = []*components.Line{goodLine}
-	goodGs.AvailableLines = 1
-
-	// Bad topology: same types, U-turn.
-	badGs := newTestGameState()
-	x := stationAt(0, 0, 0, config.Circle)
-	y := stationAt(1, 100, 0, config.Circle)
-	z := stationAt(2, 0, 0, config.Circle)
-	badLine := newConnectedLine(config.LineColors[0], 0, x, y, z)
-	badLine.Active = true
-	badGs.Stations = []*components.Station{x, y, z}
-	badGs.Lines = []*components.Line{badLine}
-	badGs.AvailableLines = 1
-
-	if Evaluate(goodGs) >= Evaluate(badGs) {
-		t.Errorf("good topology (%.2f) should score lower than bad topology (%.2f)",
-			Evaluate(goodGs), Evaluate(badGs))
-	}
-}
-
 // ── Bidirectional movement ────────────────────────────────────────────────────
 
 // TestTrain_BidirectionalBounce verifies that a train on a linear (non-loop)

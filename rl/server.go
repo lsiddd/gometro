@@ -28,7 +28,6 @@ func NewServer() *Server {
 	s.mux.HandleFunc("/info", s.handleInfo)
 	s.mux.HandleFunc("/reset", s.handleReset)
 	s.mux.HandleFunc("/step", s.handleStep)
-	s.mux.HandleFunc("/solver_act", s.handleSolverAct)
 	return s
 }
 
@@ -127,25 +126,6 @@ func (s *Server) handleStep(w http.ResponseWriter, r *http.Request) {
 	if done {
 		log.Printf("[RL] Episode ended — score=%d passengers=%d", score, delivered)
 	}
-}
-
-// ── /solver_act ───────────────────────────────────────────────────────────────
-
-type solverActResp struct {
-	Action []int `json:"action"`
-}
-
-// handleSolverAct returns the action the heuristic solver would take in the
-// current state WITHOUT advancing the simulation. Used by pretrain.py to collect
-// behavioral-cloning demonstrations.
-func (s *Server) handleSolverAct(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
-		return
-	}
-	s.mu.Lock()
-	action := s.env.InferSolverAction()
-	s.mu.Unlock()
-	writeJSON(w, solverActResp{Action: action})
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

@@ -184,49 +184,6 @@ func TestHandleStep_InvalidJSON_Returns400(t *testing.T) {
 	}
 }
 
-// ── /solver_act ───────────────────────────────────────────────────────────────
-
-func TestHandleSolverAct_GET_ReturnsAction(t *testing.T) {
-	s := newTestServer()
-	resetServer(t, s, "london")
-
-	req := httptest.NewRequest(http.MethodGet, "/solver_act", nil)
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 from GET /solver_act, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp solverActResp
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(resp.Action) != 4 {
-		t.Errorf("solver_act action length: want 4, got %d", len(resp.Action))
-	}
-}
-
-func TestHandleSolverAct_POST_ReturnsAction(t *testing.T) {
-	s := newTestServer()
-	resetServer(t, s, "london")
-
-	w := postJSON(t, s, "/solver_act", map[string]any{})
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 from POST /solver_act, got %d", w.Code)
-	}
-}
-
-func TestHandleSolverAct_WrongMethod_Returns405(t *testing.T) {
-	s := newTestServer()
-	req := httptest.NewRequest(http.MethodDelete, "/solver_act", nil)
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, req)
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405 on DELETE /solver_act, got %d", w.Code)
-	}
-}
-
 // ── writeJSON / requireMethod / decodeBody helpers ────────────────────────────
 
 func TestWriteJSON_EncodesValue(t *testing.T) {
