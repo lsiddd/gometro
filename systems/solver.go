@@ -94,9 +94,9 @@ func (s *Solver) Update(gs *state.GameState, gm *graph.GraphManager, nowMs float
 	// Respond faster when stations are near overcrowding.
 	interval := s.runInterval
 	if len(s.stationsAbove(gs, config.OvercrowdCriticalThreshold)) > 0 {
-		interval = 80.0
-	} else if len(s.stationsAbove(gs, 0.6)) > 0 {
-		interval = 150.0
+		interval = config.SolverEmergencyIntervalMs
+	} else if len(s.stationsAbove(gs, config.SolverUrgentOvercrowdFrac)) > 0 {
+		interval = config.SolverUrgentIntervalMs
 	}
 	if nowMs-s.lastRunMs < interval {
 		return
@@ -153,15 +153,15 @@ func (s *Solver) scoreUpgrade(gs *state.GameState, upgrade string) float64 {
 			return -1000
 		}
 		isolated := s.isolatedStations(gs)
-		score := float64(len(isolated)) * 25
+		score := float64(len(isolated)) * config.SolverIsolatedStationPts
 		for _, st := range gs.Stations {
-			score += st.OvercrowdProgress * 0.04
+			score += st.OvercrowdProgress * config.SolverNewLineOvercrowdWt
 		}
 		// Bonus proportional to how geographically extended the existing lines
 		// are: long lines signal that the network needs more routes, not longer ones.
-		score += s.avgLineArcLength(gs) * 0.06
+		score += s.avgLineArcLength(gs) * config.SolverNewLineArcWt
 		// Base preference so that new lines are always competitive early on.
-		score += 18
+		score += config.SolverNewLineBase
 		return score
 
 	case UpgradeCarriage:
@@ -176,11 +176,11 @@ func (s *Solver) scoreUpgrade(gs *state.GameState, upgrade string) float64 {
 			}
 			ratio := float64(len(t.Passengers)) / float64(cap)
 			if ratio > 0.5 {
-				score += ratio * 20
+				score += ratio * config.SolverCarriageCapWt
 			}
 		}
 		for _, st := range gs.Stations {
-			score += st.OvercrowdProgress * 0.03
+			score += st.OvercrowdProgress * config.SolverCarriageOvercrowdWt
 		}
 		return score
 
@@ -210,7 +210,7 @@ func (s *Solver) scoreUpgrade(gs *state.GameState, upgrade string) float64 {
 			}
 			lines := s.linesThroughStation(gs, st)
 			if len(lines) >= 2 {
-				score += float64(len(lines))*8 + st.OvercrowdProgress*0.1
+				score += float64(len(lines))*config.SolverInterchangeLinesWt + st.OvercrowdProgress*config.SolverInterchangeOvercrowdWt
 			}
 		}
 		return score
@@ -407,7 +407,7 @@ func (s *Solver) mostNeededType(station *components.Station) config.StationType 
 	var best config.StationType
 	bestN := 0
 	for t, n := range counts {
-		if n > bestN {
+		if n > bestN || (n == bestN && t < best) {
 			bestN = n
 			best = t
 		}
@@ -702,7 +702,7 @@ func (s *Solver) tryAddTrainToLineThroughStation(gs *state.GameState, station *c
 
 func (s *Solver) tryAddCarriage(gs *state.GameState) bool {
 	var bestTrain *components.Train
-	bestRatio := 0.6 // only act if > 60 % full
+	bestRatio := config.SolverMinCarriageFillRatio
 	for _, t := range gs.Trains {
 		if t.CarriageCount >= config.MaxCarriagesPerTrain {
 			continue
@@ -1047,7 +1047,7 @@ func (s *Solver) bestLineForStation(gs *state.GameState, station *components.Sta
 			typeCoverage = 40.0
 		}
 		demand := s.demandMatchScore(line, station)
-		urgency := station.OvercrowdProgress * 0.02
+		urgency := station.OvercrowdProgress * config.SolverUrgencyOvercrowdWt
 
 		// Penalty that grows quadratically with line length, discouraging
 		// piling more stations onto already-large lines.

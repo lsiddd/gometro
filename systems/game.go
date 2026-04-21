@@ -68,7 +68,7 @@ func (g *Game) createInitialStations(gs *state.GameState, width, height float64)
 	centerX := width / 2
 	centerY := height / 2
 	spread := math.Min(width, height) * config.InitialStationSpreadFraction
-	minDistance := 120.0
+	minDistance := config.StationMinDistance
 
 	for _, stationType := range types {
 		attempts := 0
@@ -252,7 +252,11 @@ func (g *Game) updatePassengerReservations(gs *state.GameState, nowMs float64) {
 
 	// Pre-compute: station → trains arriving next tick.
 	// Reduces the per-passenger train scan from O(T) to O(1) lookup.
-	clear(g.incomingTrains)
+	// Reset to length-zero rather than clearing the map so that backing arrays
+	// are reused across frames, avoiding per-frame heap allocations.
+	for k := range g.incomingTrains {
+		g.incomingTrains[k] = g.incomingTrains[k][:0]
+	}
 	for _, t := range gs.Trains {
 		if t.Line.Active && len(t.Line.Stations) > 1 && t.State == components.TrainMoving &&
 			t.NextStationIndex < len(t.Line.Stations) {
@@ -756,7 +760,7 @@ func (g *Game) SpawnStation(gs *state.GameState, screenWidth, screenHeight float
 		return false
 	}
 
-	if tryPlace(120.0, 500) {
+	if tryPlace(config.StationMinDistance, 500) {
 		return
 	}
 	// Fallback: progressively relax minDistance when the map is dense.
