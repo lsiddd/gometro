@@ -1,7 +1,8 @@
 """
 Inference server for online play.
 
-Loads a trained checkpoint and serves action decisions over HTTP.
+Loads a trained checkpoint and serves action decisions over gRPC
+(Inference service defined in rl/proto/minimetro.proto).
 The Go game binary calls this server via the --rl-client flag.
 
 Two backends are supported, selected automatically by file extension:
@@ -19,18 +20,19 @@ Usage:
     uv run python infer.py --model checkpoints/best_model.zip --port 9000
 
     # Terminal 2 — game with RL agent
-    ./minimetro-go --rl-client http://localhost:9000
+    ./minimetro-go --rl-client localhost:9000
 """
 from __future__ import annotations
 
 import argparse
-import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from concurrent import futures
 from typing import Callable
 
+import grpc
 import numpy as np
 
-from http_schemas import parse_act_request
+from rl.proto import minimetro_pb2 as pb
+from rl.proto import minimetro_pb2_grpc as pb_grpc
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +60,6 @@ def _make_onnx_predictor(model_path: str) -> Callable[[np.ndarray, np.ndarray], 
     sess = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
 
     def predict(obs: np.ndarray, mask: np.ndarray) -> list[int]:
-        # mask must be float32 (1.0=valid, 0.0=invalid)
         out = sess.run(["action"], {
             "obs":  obs.astype(np.float32),
             "mask": mask.astype(np.float32),
@@ -70,41 +71,18 @@ def _make_onnx_predictor(model_path: str) -> Callable[[np.ndarray, np.ndarray], 
 
 
 # ---------------------------------------------------------------------------
-# HTTP handler
+# gRPC servicer
 # ---------------------------------------------------------------------------
 
-class InferenceHandler(BaseHTTPRequestHandler):
-    """HTTP handler that wraps a loaded policy backend."""
+class InferenceServicer(pb_grpc.InferenceServicer):
+    def __init__(self, predict: Callable[[np.ndarray, np.ndarray], list[int]]) -> None:
+        self._predict = predict
 
-    predict: Callable[[np.ndarray, np.ndarray], list[int]]  # set by serve()
-
-    def do_POST(self):  # noqa: N802
-        if self.path != "/act":
-            self.send_error(404)
-            return
-
-        length = int(self.headers.get("Content-Length", 0))
-        try:
-            raw = json.loads(self.rfile.read(length))
-            req = parse_act_request(raw)
-        except (json.JSONDecodeError, ValueError) as exc:
-            self.send_error(400, str(exc))
-            return
-
-        obs  = np.array(req["obs"],  dtype=np.float32).reshape(1, -1)
-        mask = np.array(req["mask"], dtype=np.float32).reshape(1, -1)
-
-        action_array = InferenceHandler.predict(obs, mask)
-
-        resp = json.dumps({"action": action_array}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(resp)))
-        self.end_headers()
-        self.wfile.write(resp)
-
-    def log_message(self, fmt, *args):  # suppress per-request logs
-        pass
+    def Act(self, request: pb.ActRequest, context: grpc.ServicerContext) -> pb.ActionResponse:
+        obs  = np.array(request.obs,  dtype=np.float32).reshape(1, -1)
+        mask = np.array(request.mask, dtype=np.float32).reshape(1, -1)
+        action = self._predict(obs, mask)
+        return pb.ActionResponse(action=action)
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +95,12 @@ def serve(model_path: str, port: int) -> None:
     else:
         predictor = _make_sb3_predictor(model_path)
 
-    InferenceHandler.predict = staticmethod(predictor)
-    server = HTTPServer(("localhost", port), InferenceHandler)
-    print(f"Inference server ready at http://localhost:{port}/act")
-    server.serve_forever()
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    pb_grpc.add_InferenceServicer_to_server(InferenceServicer(predictor), server)
+    server.add_insecure_port(f"[::]:{port}")
+    server.start()
+    print(f"Inference gRPC server ready at :{port}")
+    server.wait_for_termination()
 
 
 if __name__ == "__main__":

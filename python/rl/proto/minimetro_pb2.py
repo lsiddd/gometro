@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18rl/proto/minimetro.proto\x12\x02rl\"\x07\n\x05\x45mpty\"\x98\x01\n\x0cInfoResponse\x12\x0f\n\x07obs_dim\x18\x01 \x01(\x05\x12\x13\n\x0b\x61\x63tion_dims\x18\x02 \x03(\x05\x12\x12\n\nglobal_dim\x18\x03 \x01(\x05\x12\x13\n\x0bstation_dim\x18\x04 \x01(\x05\x12\x14\n\x0cnum_stations\x18\x05 \x01(\x05\x12\x10\n\x08line_dim\x18\x06 \x01(\x05\x12\x11\n\tnum_lines\x18\x07 \x01(\x05\"7\n\x0cResetRequest\x12\x0c\n\x04\x63ity\x18\x01 \x01(\t\x12\x19\n\x11spawn_rate_factor\x18\x02 \x01(\x02\"2\n\rResetResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\"#\n\rActionRequest\x12\x12\n\x06\x61\x63tion\x18\x01 \x03(\x05\x42\x02\x10\x01\"\xc9\x01\n\x0cStepResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\x12\x0e\n\x06reward\x18\x03 \x01(\x01\x12\x0c\n\x04\x64one\x18\x04 \x01(\x08\x12\r\n\x05score\x18\x05 \x01(\x05\x12\x1c\n\x14passengers_delivered\x18\x06 \x01(\x05\x12\x0c\n\x04week\x18\x07 \x01(\x05\x12\x10\n\x08stations\x18\x08 \x01(\x05\x12\x11\n\tgame_over\x18\t \x01(\x08\x12\x18\n\x10in_upgrade_modal\x18\n \x01(\x08\"$\n\x0e\x41\x63tionResponse\x12\x12\n\x06\x61\x63tion\x18\x01 \x03(\x05\x42\x02\x10\x01\x32\xc5\x01\n\x05RLEnv\x12%\n\x04Info\x12\t.rl.Empty\x1a\x10.rl.InfoResponse\"\x00\x12.\n\x05Reset\x12\x10.rl.ResetRequest\x1a\x11.rl.ResetResponse\"\x00\x12\x37\n\nRunEpisode\x12\x11.rl.ActionRequest\x1a\x10.rl.StepResponse\"\x00(\x01\x30\x01\x12,\n\tSolverAct\x12\t.rl.Empty\x1a\x12.rl.ActionResponse\"\x00\x42\x17Z\x15minimetro-go/rl/protob\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18rl/proto/minimetro.proto\x12\x02rl\"\x07\n\x05\x45mpty\"\x98\x01\n\x0cInfoResponse\x12\x0f\n\x07obs_dim\x18\x01 \x01(\x05\x12\x13\n\x0b\x61\x63tion_dims\x18\x02 \x03(\x05\x12\x12\n\nglobal_dim\x18\x03 \x01(\x05\x12\x13\n\x0bstation_dim\x18\x04 \x01(\x05\x12\x14\n\x0cnum_stations\x18\x05 \x01(\x05\x12\x10\n\x08line_dim\x18\x06 \x01(\x05\x12\x11\n\tnum_lines\x18\x07 \x01(\x05\"7\n\x0cResetRequest\x12\x0c\n\x04\x63ity\x18\x01 \x01(\t\x12\x19\n\x11spawn_rate_factor\x18\x02 \x01(\x02\"2\n\rResetResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\"#\n\rActionRequest\x12\x12\n\x06\x61\x63tion\x18\x01 \x03(\x05\x42\x02\x10\x01\"\xc9\x01\n\x0cStepResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\x12\x0e\n\x06reward\x18\x03 \x01(\x01\x12\x0c\n\x04\x64one\x18\x04 \x01(\x08\x12\r\n\x05score\x18\x05 \x01(\x05\x12\x1c\n\x14passengers_delivered\x18\x06 \x01(\x05\x12\x0c\n\x04week\x18\x07 \x01(\x05\x12\x10\n\x08stations\x18\x08 \x01(\x05\x12\x11\n\tgame_over\x18\t \x01(\x08\x12\x18\n\x10in_upgrade_modal\x18\n \x01(\x08\"/\n\nActRequest\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\"$\n\x0e\x41\x63tionResponse\x12\x12\n\x06\x61\x63tion\x18\x01 \x03(\x05\x42\x02\x10\x01\x32\x97\x01\n\x05RLEnv\x12%\n\x04Info\x12\t.rl.Empty\x1a\x10.rl.InfoResponse\"\x00\x12.\n\x05Reset\x12\x10.rl.ResetRequest\x1a\x11.rl.ResetResponse\"\x00\x12\x37\n\nRunEpisode\x12\x11.rl.ActionRequest\x1a\x10.rl.StepResponse\"\x00(\x01\x30\x01\x32\x38\n\tInference\x12+\n\x03\x41\x63t\x12\x0e.rl.ActRequest\x1a\x12.rl.ActionResponse\"\x00\x42\x17Z\x15minimetro-go/rl/protob\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -42,6 +42,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_STEPRESPONSE'].fields_by_name['obs']._serialized_options = b'\020\001'
   _globals['_STEPRESPONSE'].fields_by_name['mask']._loaded_options = None
   _globals['_STEPRESPONSE'].fields_by_name['mask']._serialized_options = b'\020\001'
+  _globals['_ACTREQUEST'].fields_by_name['obs']._loaded_options = None
+  _globals['_ACTREQUEST'].fields_by_name['obs']._serialized_options = b'\020\001'
+  _globals['_ACTREQUEST'].fields_by_name['mask']._loaded_options = None
+  _globals['_ACTREQUEST'].fields_by_name['mask']._serialized_options = b'\020\001'
   _globals['_ACTIONRESPONSE'].fields_by_name['action']._loaded_options = None
   _globals['_ACTIONRESPONSE'].fields_by_name['action']._serialized_options = b'\020\001'
   _globals['_EMPTY']._serialized_start=32
@@ -56,8 +60,12 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_ACTIONREQUEST']._serialized_end=340
   _globals['_STEPRESPONSE']._serialized_start=343
   _globals['_STEPRESPONSE']._serialized_end=544
-  _globals['_ACTIONRESPONSE']._serialized_start=546
-  _globals['_ACTIONRESPONSE']._serialized_end=582
-  _globals['_RLENV']._serialized_start=585
-  _globals['_RLENV']._serialized_end=782
+  _globals['_ACTREQUEST']._serialized_start=546
+  _globals['_ACTREQUEST']._serialized_end=593
+  _globals['_ACTIONRESPONSE']._serialized_start=595
+  _globals['_ACTIONRESPONSE']._serialized_end=631
+  _globals['_RLENV']._serialized_start=634
+  _globals['_RLENV']._serialized_end=785
+  _globals['_INFERENCE']._serialized_start=787
+  _globals['_INFERENCE']._serialized_end=843
 # @@protoc_insertion_point(module_scope)

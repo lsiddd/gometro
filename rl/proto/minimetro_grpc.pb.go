@@ -220,3 +220,111 @@ var RLEnv_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "rl/proto/minimetro.proto",
 }
+
+const (
+	Inference_Act_FullMethodName = "/rl.Inference/Act"
+)
+
+// InferenceClient is the client API for Inference service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Inference is implemented by the Python inference server (infer.py).
+// The Go live-game binary is the client (--rl-client flag).
+type InferenceClient interface {
+	Act(ctx context.Context, in *ActRequest, opts ...grpc.CallOption) (*ActionResponse, error)
+}
+
+type inferenceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewInferenceClient(cc grpc.ClientConnInterface) InferenceClient {
+	return &inferenceClient{cc}
+}
+
+func (c *inferenceClient) Act(ctx context.Context, in *ActRequest, opts ...grpc.CallOption) (*ActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ActionResponse)
+	err := c.cc.Invoke(ctx, Inference_Act_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// InferenceServer is the server API for Inference service.
+// All implementations must embed UnimplementedInferenceServer
+// for forward compatibility.
+//
+// Inference is implemented by the Python inference server (infer.py).
+// The Go live-game binary is the client (--rl-client flag).
+type InferenceServer interface {
+	Act(context.Context, *ActRequest) (*ActionResponse, error)
+	mustEmbedUnimplementedInferenceServer()
+}
+
+// UnimplementedInferenceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedInferenceServer struct{}
+
+func (UnimplementedInferenceServer) Act(context.Context, *ActRequest) (*ActionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Act not implemented")
+}
+func (UnimplementedInferenceServer) mustEmbedUnimplementedInferenceServer() {}
+func (UnimplementedInferenceServer) testEmbeddedByValue()                   {}
+
+// UnsafeInferenceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to InferenceServer will
+// result in compilation errors.
+type UnsafeInferenceServer interface {
+	mustEmbedUnimplementedInferenceServer()
+}
+
+func RegisterInferenceServer(s grpc.ServiceRegistrar, srv InferenceServer) {
+	// If the following call panics, it indicates UnimplementedInferenceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&Inference_ServiceDesc, srv)
+}
+
+func _Inference_Act_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ActRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InferenceServer).Act(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Inference_Act_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InferenceServer).Act(ctx, req.(*ActRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Inference_ServiceDesc is the grpc.ServiceDesc for Inference service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Inference_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "rl.Inference",
+	HandlerType: (*InferenceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Act",
+			Handler:    _Inference_Act_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "rl/proto/minimetro.proto",
+}

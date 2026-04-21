@@ -56,11 +56,6 @@ class RLEnvStub(object):
                 request_serializer=rl_dot_proto_dot_minimetro__pb2.ActionRequest.SerializeToString,
                 response_deserializer=rl_dot_proto_dot_minimetro__pb2.StepResponse.FromString,
                 _registered_method=True)
-        self.SolverAct = channel.unary_unary(
-                '/rl.RLEnv/SolverAct',
-                request_serializer=rl_dot_proto_dot_minimetro__pb2.Empty.SerializeToString,
-                response_deserializer=rl_dot_proto_dot_minimetro__pb2.ActionResponse.FromString,
-                _registered_method=True)
 
 
 class RLEnvServicer(object):
@@ -98,14 +93,6 @@ class RLEnvServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def SolverAct(self, request, context):
-        """SolverAct returns the action the heuristic solver would take in the
-        current state without advancing the simulation.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_RLEnvServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -123,11 +110,6 @@ def add_RLEnvServicer_to_server(servicer, server):
                     servicer.RunEpisode,
                     request_deserializer=rl_dot_proto_dot_minimetro__pb2.ActionRequest.FromString,
                     response_serializer=rl_dot_proto_dot_minimetro__pb2.StepResponse.SerializeToString,
-            ),
-            'SolverAct': grpc.unary_unary_rpc_method_handler(
-                    servicer.SolverAct,
-                    request_deserializer=rl_dot_proto_dot_minimetro__pb2.Empty.FromString,
-                    response_serializer=rl_dot_proto_dot_minimetro__pb2.ActionResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -228,8 +210,59 @@ class RLEnv(object):
             metadata,
             _registered_method=True)
 
+
+class InferenceStub(object):
+    """Inference is implemented by the Python inference server (infer.py).
+    The Go live-game binary is the client (--rl-client flag).
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.Act = channel.unary_unary(
+                '/rl.Inference/Act',
+                request_serializer=rl_dot_proto_dot_minimetro__pb2.ActRequest.SerializeToString,
+                response_deserializer=rl_dot_proto_dot_minimetro__pb2.ActionResponse.FromString,
+                _registered_method=True)
+
+
+class InferenceServicer(object):
+    """Inference is implemented by the Python inference server (infer.py).
+    The Go live-game binary is the client (--rl-client flag).
+    """
+
+    def Act(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_InferenceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'Act': grpc.unary_unary_rpc_method_handler(
+                    servicer.Act,
+                    request_deserializer=rl_dot_proto_dot_minimetro__pb2.ActRequest.FromString,
+                    response_serializer=rl_dot_proto_dot_minimetro__pb2.ActionResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'rl.Inference', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('rl.Inference', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class Inference(object):
+    """Inference is implemented by the Python inference server (infer.py).
+    The Go live-game binary is the client (--rl-client flag).
+    """
+
     @staticmethod
-    def SolverAct(request,
+    def Act(request,
             target,
             options=(),
             channel_credentials=None,
@@ -242,8 +275,8 @@ class RLEnv(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/rl.RLEnv/SolverAct',
-            rl_dot_proto_dot_minimetro__pb2.Empty.SerializeToString,
+            '/rl.Inference/Act',
+            rl_dot_proto_dot_minimetro__pb2.ActRequest.SerializeToString,
             rl_dot_proto_dot_minimetro__pb2.ActionResponse.FromString,
             options,
             channel_credentials,

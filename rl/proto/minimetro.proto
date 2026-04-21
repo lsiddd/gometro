@@ -27,6 +27,12 @@ service RLEnv {
 
 }
 
+// Inference is implemented by the Python inference server (infer.py).
+// The Go live-game binary is the client (--rl-client flag).
+service Inference {
+  rpc Act(ActRequest) returns (ActionResponse) {}
+}
+
 message Empty {}
 
 // ── Info ─────────────────────────────────────────────────────────────────────
@@ -80,7 +86,12 @@ message StepResponse {
   bool   in_upgrade_modal      = 10;
 }
 
-// ── SolverAct ─────────────────────────────────────────────────────────────────
+// ── Inference ────────────────────────────────────────────────────────────────
+
+message ActRequest {
+  repeated float obs  = 1 [packed = true];
+  repeated bool  mask = 2 [packed = true];
+}
 
 message ActionResponse {
   repeated int32 action = 1 [packed = true];

@@ -108,7 +108,7 @@ func (m *MinimetroGame) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
-	rlClientURL := flag.String("rl-client", "", "if set, use the RL agent at this inference server URL (e.g. http://localhost:9000)")
+	rlClientURL := flag.String("rl-client", "", "if set, use the RL agent at this gRPC inference server address (e.g. localhost:9000)")
 	flag.Parse()
 
 	ebiten.SetWindowSize(1200, 800)

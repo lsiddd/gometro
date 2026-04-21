@@ -112,25 +112,30 @@ func (t *Train) GetUpcomingStops(currentStation *Station, singleDirectionOnly bo
 	}
 
 	// singleDirectionOnly=false: union of both directional sets; dedup required.
-	upcoming := make(map[*Station]bool)
+	// Iterate slices in order and check a seen-map to preserve insertion order
+	// (ranging over a map is non-deterministic in Go, which breaks RL reproducibility).
+	seen := make(map[*Station]bool, len(lineStations))
+	result := make([]*Station, 0, len(lineStations))
+	appendUnique := func(s *Station) {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
 	if currentDirection == 1 {
 		for i := currentIndex + 1; i < len(lineStations); i++ {
-			upcoming[lineStations[i]] = true
+			appendUnique(lineStations[i])
 		}
 		for i := len(lineStations) - 2; i >= 0; i-- {
-			upcoming[lineStations[i]] = true
+			appendUnique(lineStations[i])
 		}
 	} else {
 		for i := currentIndex - 1; i >= 0; i-- {
-			upcoming[lineStations[i]] = true
+			appendUnique(lineStations[i])
 		}
 		for i := 1; i < len(lineStations); i++ {
-			upcoming[lineStations[i]] = true
+			appendUnique(lineStations[i])
 		}
-	}
-	result := make([]*Station, 0, len(upcoming))
-	for s := range upcoming {
-		result = append(result, s)
 	}
 	return result
 }

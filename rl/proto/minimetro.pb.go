@@ -421,6 +421,58 @@ func (x *StepResponse) GetInUpgradeModal() bool {
 	return false
 }
 
+type ActRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Obs           []float32              `protobuf:"fixed32,1,rep,packed,name=obs,proto3" json:"obs,omitempty"`
+	Mask          []bool                 `protobuf:"varint,2,rep,packed,name=mask,proto3" json:"mask,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ActRequest) Reset() {
+	*x = ActRequest{}
+	mi := &file_rl_proto_minimetro_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActRequest) ProtoMessage() {}
+
+func (x *ActRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rl_proto_minimetro_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActRequest.ProtoReflect.Descriptor instead.
+func (*ActRequest) Descriptor() ([]byte, []int) {
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ActRequest) GetObs() []float32 {
+	if x != nil {
+		return x.Obs
+	}
+	return nil
+}
+
+func (x *ActRequest) GetMask() []bool {
+	if x != nil {
+		return x.Mask
+	}
+	return nil
+}
+
 type ActionResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Action        []int32                `protobuf:"varint,1,rep,packed,name=action,proto3" json:"action,omitempty"`
@@ -430,7 +482,7 @@ type ActionResponse struct {
 
 func (x *ActionResponse) Reset() {
 	*x = ActionResponse{}
-	mi := &file_rl_proto_minimetro_proto_msgTypes[6]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -442,7 +494,7 @@ func (x *ActionResponse) String() string {
 func (*ActionResponse) ProtoMessage() {}
 
 func (x *ActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rl_proto_minimetro_proto_msgTypes[6]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -455,7 +507,7 @@ func (x *ActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionResponse.ProtoReflect.Descriptor instead.
 func (*ActionResponse) Descriptor() ([]byte, []int) {
-	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{6}
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ActionResponse) GetAction() []int32 {
@@ -501,15 +553,20 @@ const file_rl_proto_minimetro_proto_rawDesc = "" +
 	"\bstations\x18\b \x01(\x05R\bstations\x12\x1b\n" +
 	"\tgame_over\x18\t \x01(\bR\bgameOver\x12(\n" +
 	"\x10in_upgrade_modal\x18\n" +
-	" \x01(\bR\x0einUpgradeModal\",\n" +
+	" \x01(\bR\x0einUpgradeModal\":\n" +
+	"\n" +
+	"ActRequest\x12\x14\n" +
+	"\x03obs\x18\x01 \x03(\x02B\x02\x10\x01R\x03obs\x12\x16\n" +
+	"\x04mask\x18\x02 \x03(\bB\x02\x10\x01R\x04mask\",\n" +
 	"\x0eActionResponse\x12\x1a\n" +
-	"\x06action\x18\x01 \x03(\x05B\x02\x10\x01R\x06action2\xc5\x01\n" +
+	"\x06action\x18\x01 \x03(\x05B\x02\x10\x01R\x06action2\x97\x01\n" +
 	"\x05RLEnv\x12%\n" +
 	"\x04Info\x12\t.rl.Empty\x1a\x10.rl.InfoResponse\"\x00\x12.\n" +
 	"\x05Reset\x12\x10.rl.ResetRequest\x1a\x11.rl.ResetResponse\"\x00\x127\n" +
 	"\n" +
-	"RunEpisode\x12\x11.rl.ActionRequest\x1a\x10.rl.StepResponse\"\x00(\x010\x01\x12,\n" +
-	"\tSolverAct\x12\t.rl.Empty\x1a\x12.rl.ActionResponse\"\x00B\x17Z\x15minimetro-go/rl/protob\x06proto3"
+	"RunEpisode\x12\x11.rl.ActionRequest\x1a\x10.rl.StepResponse\"\x00(\x010\x0128\n" +
+	"\tInference\x12+\n" +
+	"\x03Act\x12\x0e.rl.ActRequest\x1a\x12.rl.ActionResponse\"\x00B\x17Z\x15minimetro-go/rl/protob\x06proto3"
 
 var (
 	file_rl_proto_minimetro_proto_rawDescOnce sync.Once
@@ -523,7 +580,7 @@ func file_rl_proto_minimetro_proto_rawDescGZIP() []byte {
 	return file_rl_proto_minimetro_proto_rawDescData
 }
 
-var file_rl_proto_minimetro_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_rl_proto_minimetro_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_rl_proto_minimetro_proto_goTypes = []any{
 	(*Empty)(nil),          // 0: rl.Empty
 	(*InfoResponse)(nil),   // 1: rl.InfoResponse
@@ -531,17 +588,18 @@ var file_rl_proto_minimetro_proto_goTypes = []any{
 	(*ResetResponse)(nil),  // 3: rl.ResetResponse
 	(*ActionRequest)(nil),  // 4: rl.ActionRequest
 	(*StepResponse)(nil),   // 5: rl.StepResponse
-	(*ActionResponse)(nil), // 6: rl.ActionResponse
+	(*ActRequest)(nil),     // 6: rl.ActRequest
+	(*ActionResponse)(nil), // 7: rl.ActionResponse
 }
 var file_rl_proto_minimetro_proto_depIdxs = []int32{
 	0, // 0: rl.RLEnv.Info:input_type -> rl.Empty
 	2, // 1: rl.RLEnv.Reset:input_type -> rl.ResetRequest
 	4, // 2: rl.RLEnv.RunEpisode:input_type -> rl.ActionRequest
-	0, // 3: rl.RLEnv.SolverAct:input_type -> rl.Empty
+	6, // 3: rl.Inference.Act:input_type -> rl.ActRequest
 	1, // 4: rl.RLEnv.Info:output_type -> rl.InfoResponse
 	3, // 5: rl.RLEnv.Reset:output_type -> rl.ResetResponse
 	5, // 6: rl.RLEnv.RunEpisode:output_type -> rl.StepResponse
-	6, // 7: rl.RLEnv.SolverAct:output_type -> rl.ActionResponse
+	7, // 7: rl.Inference.Act:output_type -> rl.ActionResponse
 	4, // [4:8] is the sub-list for method output_type
 	0, // [0:4] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
@@ -560,9 +618,9 @@ func file_rl_proto_minimetro_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rl_proto_minimetro_proto_rawDesc), len(file_rl_proto_minimetro_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_rl_proto_minimetro_proto_goTypes,
 		DependencyIndexes: file_rl_proto_minimetro_proto_depIdxs,
