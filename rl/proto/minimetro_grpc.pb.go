@@ -19,9 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RLEnv_Info_FullMethodName       = "/rl.RLEnv/Info"
-	RLEnv_Reset_FullMethodName      = "/rl.RLEnv/Reset"
-	RLEnv_RunEpisode_FullMethodName = "/rl.RLEnv/RunEpisode"
+	RLEnv_Info_FullMethodName             = "/rl.RLEnv/Info"
+	RLEnv_Reset_FullMethodName            = "/rl.RLEnv/Reset"
+	RLEnv_RunEpisode_FullMethodName       = "/rl.RLEnv/RunEpisode"
+	RLEnv_ResetVector_FullMethodName      = "/rl.RLEnv/ResetVector"
+	RLEnv_RunVectorEpisode_FullMethodName = "/rl.RLEnv/RunVectorEpisode"
 )
 
 // RLEnvClient is the client API for RLEnv service.
@@ -46,6 +48,9 @@ type RLEnvClient interface {
 	// When done=true in a StepResponse, call Reset() to begin the next episode
 	// (the stream can be reused — send the next action after Reset returns).
 	RunEpisode(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ActionRequest, StepResponse], error)
+	// Vectorized endpoints for scaling throughput.
+	ResetVector(ctx context.Context, in *VectorResetRequest, opts ...grpc.CallOption) (*VectorResetResponse, error)
+	RunVectorEpisode(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[VectorActionRequest, VectorStepResponse], error)
 }
 
 type rLEnvClient struct {
@@ -89,6 +94,29 @@ func (c *rLEnvClient) RunEpisode(ctx context.Context, opts ...grpc.CallOption) (
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RLEnv_RunEpisodeClient = grpc.BidiStreamingClient[ActionRequest, StepResponse]
 
+func (c *rLEnvClient) ResetVector(ctx context.Context, in *VectorResetRequest, opts ...grpc.CallOption) (*VectorResetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VectorResetResponse)
+	err := c.cc.Invoke(ctx, RLEnv_ResetVector_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rLEnvClient) RunVectorEpisode(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[VectorActionRequest, VectorStepResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RLEnv_ServiceDesc.Streams[1], RLEnv_RunVectorEpisode_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[VectorActionRequest, VectorStepResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RLEnv_RunVectorEpisodeClient = grpc.BidiStreamingClient[VectorActionRequest, VectorStepResponse]
+
 // RLEnvServer is the server API for RLEnv service.
 // All implementations must embed UnimplementedRLEnvServer
 // for forward compatibility.
@@ -111,6 +139,9 @@ type RLEnvServer interface {
 	// When done=true in a StepResponse, call Reset() to begin the next episode
 	// (the stream can be reused — send the next action after Reset returns).
 	RunEpisode(grpc.BidiStreamingServer[ActionRequest, StepResponse]) error
+	// Vectorized endpoints for scaling throughput.
+	ResetVector(context.Context, *VectorResetRequest) (*VectorResetResponse, error)
+	RunVectorEpisode(grpc.BidiStreamingServer[VectorActionRequest, VectorStepResponse]) error
 	mustEmbedUnimplementedRLEnvServer()
 }
 
@@ -129,6 +160,12 @@ func (UnimplementedRLEnvServer) Reset(context.Context, *ResetRequest) (*ResetRes
 }
 func (UnimplementedRLEnvServer) RunEpisode(grpc.BidiStreamingServer[ActionRequest, StepResponse]) error {
 	return status.Error(codes.Unimplemented, "method RunEpisode not implemented")
+}
+func (UnimplementedRLEnvServer) ResetVector(context.Context, *VectorResetRequest) (*VectorResetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetVector not implemented")
+}
+func (UnimplementedRLEnvServer) RunVectorEpisode(grpc.BidiStreamingServer[VectorActionRequest, VectorStepResponse]) error {
+	return status.Error(codes.Unimplemented, "method RunVectorEpisode not implemented")
 }
 func (UnimplementedRLEnvServer) mustEmbedUnimplementedRLEnvServer() {}
 func (UnimplementedRLEnvServer) testEmbeddedByValue()               {}
@@ -194,6 +231,31 @@ func _RLEnv_RunEpisode_Handler(srv interface{}, stream grpc.ServerStream) error 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RLEnv_RunEpisodeServer = grpc.BidiStreamingServer[ActionRequest, StepResponse]
 
+func _RLEnv_ResetVector_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VectorResetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RLEnvServer).ResetVector(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RLEnv_ResetVector_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RLEnvServer).ResetVector(ctx, req.(*VectorResetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RLEnv_RunVectorEpisode_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RLEnvServer).RunVectorEpisode(&grpc.GenericServerStream[VectorActionRequest, VectorStepResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RLEnv_RunVectorEpisodeServer = grpc.BidiStreamingServer[VectorActionRequest, VectorStepResponse]
+
 // RLEnv_ServiceDesc is the grpc.ServiceDesc for RLEnv service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -209,11 +271,21 @@ var RLEnv_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Reset",
 			Handler:    _RLEnv_Reset_Handler,
 		},
+		{
+			MethodName: "ResetVector",
+			Handler:    _RLEnv_ResetVector_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "RunEpisode",
 			Handler:       _RLEnv_RunEpisode_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "RunVectorEpisode",
+			Handler:       _RLEnv_RunVectorEpisode_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

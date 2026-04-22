@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18rl/proto/minimetro.proto\x12\x02rl\"\x07\n\x05\x45mpty\"\x98\x01\n\x0cInfoResponse\x12\x0f\n\x07obs_dim\x18\x01 \x01(\x05\x12\x13\n\x0b\x61\x63tion_dims\x18\x02 \x03(\x05\x12\x12\n\nglobal_dim\x18\x03 \x01(\x05\x12\x13\n\x0bstation_dim\x18\x04 \x01(\x05\x12\x14\n\x0cnum_stations\x18\x05 \x01(\x05\x12\x10\n\x08line_dim\x18\x06 \x01(\x05\x12\x11\n\tnum_lines\x18\x07 \x01(\x05\"7\n\x0cResetRequest\x12\x0c\n\x04\x63ity\x18\x01 \x01(\t\x12\x19\n\x11spawn_rate_factor\x18\x02 \x01(\x02\"2\n\rResetResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\"#\n\rActionRequest\x12\x12\n\x06\x61\x63tion\x18\x01 \x03(\x05\x42\x02\x10\x01\"\xc9\x01\n\x0cStepResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\x12\x0e\n\x06reward\x18\x03 \x01(\x01\x12\x0c\n\x04\x64one\x18\x04 \x01(\x08\x12\r\n\x05score\x18\x05 \x01(\x05\x12\x1c\n\x14passengers_delivered\x18\x06 \x01(\x05\x12\x0c\n\x04week\x18\x07 \x01(\x05\x12\x10\n\x08stations\x18\x08 \x01(\x05\x12\x11\n\tgame_over\x18\t \x01(\x08\x12\x18\n\x10in_upgrade_modal\x18\n \x01(\x08\"/\n\nActRequest\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\"$\n\x0e\x41\x63tionResponse\x12\x12\n\x06\x61\x63tion\x18\x01 \x03(\x05\x42\x02\x10\x01\x32\x97\x01\n\x05RLEnv\x12%\n\x04Info\x12\t.rl.Empty\x1a\x10.rl.InfoResponse\"\x00\x12.\n\x05Reset\x12\x10.rl.ResetRequest\x1a\x11.rl.ResetResponse\"\x00\x12\x37\n\nRunEpisode\x12\x11.rl.ActionRequest\x1a\x10.rl.StepResponse\"\x00(\x01\x30\x01\x32\x38\n\tInference\x12+\n\x03\x41\x63t\x12\x0e.rl.ActRequest\x1a\x12.rl.ActionResponse\"\x00\x42\x17Z\x15minimetro-go/rl/protob\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18rl/proto/minimetro.proto\x12\x02rl\"\x07\n\x05\x45mpty\"\x98\x01\n\x0cInfoResponse\x12\x0f\n\x07obs_dim\x18\x01 \x01(\x05\x12\x13\n\x0b\x61\x63tion_dims\x18\x02 \x03(\x05\x12\x12\n\nglobal_dim\x18\x03 \x01(\x05\x12\x13\n\x0bstation_dim\x18\x04 \x01(\x05\x12\x14\n\x0cnum_stations\x18\x05 \x01(\x05\x12\x10\n\x08line_dim\x18\x06 \x01(\x05\x12\x11\n\tnum_lines\x18\x07 \x01(\x05\"7\n\x0cResetRequest\x12\x0c\n\x04\x63ity\x18\x01 \x01(\t\x12\x19\n\x11spawn_rate_factor\x18\x02 \x01(\x02\"2\n\rResetResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\"O\n\x12VectorResetRequest\x12\x10\n\x08num_envs\x18\x01 \x01(\x05\x12\x0c\n\x04\x63ity\x18\x02 \x01(\t\x12\x19\n\x11spawn_rate_factor\x18\x03 \x01(\x02\"8\n\x13VectorResetResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\"#\n\rActionRequest\x12\x12\n\x06\x61\x63tion\x18\x01 \x03(\x05\x42\x02\x10\x01\"\xc9\x01\n\x0cStepResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\x12\x0e\n\x06reward\x18\x03 \x01(\x01\x12\x0c\n\x04\x64one\x18\x04 \x01(\x08\x12\r\n\x05score\x18\x05 \x01(\x05\x12\x1c\n\x14passengers_delivered\x18\x06 \x01(\x05\x12\x0c\n\x04week\x18\x07 \x01(\x05\x12\x10\n\x08stations\x18\x08 \x01(\x05\x12\x11\n\tgame_over\x18\t \x01(\x08\x12\x18\n\x10in_upgrade_modal\x18\n \x01(\x08\"*\n\x13VectorActionRequest\x12\x13\n\x07\x61\x63tions\x18\x01 \x03(\x05\x42\x02\x10\x01\"\x89\x02\n\x12VectorStepResponse\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\x12\x12\n\x06reward\x18\x03 \x03(\x01\x42\x02\x10\x01\x12\x10\n\x04\x64one\x18\x04 \x03(\x08\x42\x02\x10\x01\x12\x18\n\x0cterminal_obs\x18\x05 \x03(\x02\x42\x02\x10\x01\x12\x11\n\x05score\x18\x06 \x03(\x05\x42\x02\x10\x01\x12 \n\x14passengers_delivered\x18\x07 \x03(\x05\x42\x02\x10\x01\x12\x10\n\x04week\x18\x08 \x03(\x05\x42\x02\x10\x01\x12\x14\n\x08stations\x18\t \x03(\x05\x42\x02\x10\x01\x12\x15\n\tgame_over\x18\n \x03(\x08\x42\x02\x10\x01\x12\x1c\n\x10in_upgrade_modal\x18\x0b \x03(\x08\x42\x02\x10\x01\"/\n\nActRequest\x12\x0f\n\x03obs\x18\x01 \x03(\x02\x42\x02\x10\x01\x12\x10\n\x04mask\x18\x02 \x03(\x08\x42\x02\x10\x01\"$\n\x0e\x41\x63tionResponse\x12\x12\n\x06\x61\x63tion\x18\x01 \x03(\x05\x42\x02\x10\x01\x32\xa4\x02\n\x05RLEnv\x12%\n\x04Info\x12\t.rl.Empty\x1a\x10.rl.InfoResponse\"\x00\x12.\n\x05Reset\x12\x10.rl.ResetRequest\x1a\x11.rl.ResetResponse\"\x00\x12\x37\n\nRunEpisode\x12\x11.rl.ActionRequest\x1a\x10.rl.StepResponse\"\x00(\x01\x30\x01\x12@\n\x0bResetVector\x12\x16.rl.VectorResetRequest\x1a\x17.rl.VectorResetResponse\"\x00\x12I\n\x10RunVectorEpisode\x12\x17.rl.VectorActionRequest\x1a\x16.rl.VectorStepResponse\"\x00(\x01\x30\x01\x32\x38\n\tInference\x12+\n\x03\x41\x63t\x12\x0e.rl.ActRequest\x1a\x12.rl.ActionResponse\"\x00\x42\x17Z\x15minimetro-go/rl/protob\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -36,12 +36,40 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_RESETRESPONSE'].fields_by_name['obs']._serialized_options = b'\020\001'
   _globals['_RESETRESPONSE'].fields_by_name['mask']._loaded_options = None
   _globals['_RESETRESPONSE'].fields_by_name['mask']._serialized_options = b'\020\001'
+  _globals['_VECTORRESETRESPONSE'].fields_by_name['obs']._loaded_options = None
+  _globals['_VECTORRESETRESPONSE'].fields_by_name['obs']._serialized_options = b'\020\001'
+  _globals['_VECTORRESETRESPONSE'].fields_by_name['mask']._loaded_options = None
+  _globals['_VECTORRESETRESPONSE'].fields_by_name['mask']._serialized_options = b'\020\001'
   _globals['_ACTIONREQUEST'].fields_by_name['action']._loaded_options = None
   _globals['_ACTIONREQUEST'].fields_by_name['action']._serialized_options = b'\020\001'
   _globals['_STEPRESPONSE'].fields_by_name['obs']._loaded_options = None
   _globals['_STEPRESPONSE'].fields_by_name['obs']._serialized_options = b'\020\001'
   _globals['_STEPRESPONSE'].fields_by_name['mask']._loaded_options = None
   _globals['_STEPRESPONSE'].fields_by_name['mask']._serialized_options = b'\020\001'
+  _globals['_VECTORACTIONREQUEST'].fields_by_name['actions']._loaded_options = None
+  _globals['_VECTORACTIONREQUEST'].fields_by_name['actions']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['obs']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['obs']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['mask']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['mask']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['reward']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['reward']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['done']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['done']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['terminal_obs']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['terminal_obs']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['score']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['score']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['passengers_delivered']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['passengers_delivered']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['week']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['week']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['stations']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['stations']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['game_over']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['game_over']._serialized_options = b'\020\001'
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['in_upgrade_modal']._loaded_options = None
+  _globals['_VECTORSTEPRESPONSE'].fields_by_name['in_upgrade_modal']._serialized_options = b'\020\001'
   _globals['_ACTREQUEST'].fields_by_name['obs']._loaded_options = None
   _globals['_ACTREQUEST'].fields_by_name['obs']._serialized_options = b'\020\001'
   _globals['_ACTREQUEST'].fields_by_name['mask']._loaded_options = None
@@ -56,16 +84,24 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_RESETREQUEST']._serialized_end=251
   _globals['_RESETRESPONSE']._serialized_start=253
   _globals['_RESETRESPONSE']._serialized_end=303
-  _globals['_ACTIONREQUEST']._serialized_start=305
-  _globals['_ACTIONREQUEST']._serialized_end=340
-  _globals['_STEPRESPONSE']._serialized_start=343
-  _globals['_STEPRESPONSE']._serialized_end=544
-  _globals['_ACTREQUEST']._serialized_start=546
-  _globals['_ACTREQUEST']._serialized_end=593
-  _globals['_ACTIONRESPONSE']._serialized_start=595
-  _globals['_ACTIONRESPONSE']._serialized_end=631
-  _globals['_RLENV']._serialized_start=634
-  _globals['_RLENV']._serialized_end=785
-  _globals['_INFERENCE']._serialized_start=787
-  _globals['_INFERENCE']._serialized_end=843
+  _globals['_VECTORRESETREQUEST']._serialized_start=305
+  _globals['_VECTORRESETREQUEST']._serialized_end=384
+  _globals['_VECTORRESETRESPONSE']._serialized_start=386
+  _globals['_VECTORRESETRESPONSE']._serialized_end=442
+  _globals['_ACTIONREQUEST']._serialized_start=444
+  _globals['_ACTIONREQUEST']._serialized_end=479
+  _globals['_STEPRESPONSE']._serialized_start=482
+  _globals['_STEPRESPONSE']._serialized_end=683
+  _globals['_VECTORACTIONREQUEST']._serialized_start=685
+  _globals['_VECTORACTIONREQUEST']._serialized_end=727
+  _globals['_VECTORSTEPRESPONSE']._serialized_start=730
+  _globals['_VECTORSTEPRESPONSE']._serialized_end=995
+  _globals['_ACTREQUEST']._serialized_start=997
+  _globals['_ACTREQUEST']._serialized_end=1044
+  _globals['_ACTIONRESPONSE']._serialized_start=1046
+  _globals['_ACTIONRESPONSE']._serialized_end=1082
+  _globals['_RLENV']._serialized_start=1085
+  _globals['_RLENV']._serialized_end=1377
+  _globals['_INFERENCE']._serialized_start=1379
+  _globals['_INFERENCE']._serialized_end=1435
 # @@protoc_insertion_point(module_scope)

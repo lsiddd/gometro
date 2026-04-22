@@ -25,6 +25,9 @@ service RLEnv {
   // (the stream can be reused — send the next action after Reset returns).
   rpc RunEpisode(stream ActionRequest) returns (stream StepResponse) {}
 
+  // Vectorized endpoints for scaling throughput.
+  rpc ResetVector(VectorResetRequest) returns (VectorResetResponse) {}
+  rpc RunVectorEpisode(stream VectorActionRequest) returns (stream VectorStepResponse) {}
 }
 
 // Inference is implemented by the Python inference server (infer.py).
@@ -65,6 +68,22 @@ message ResetResponse {
   repeated bool  mask = 2 [packed = true];
 }
 
+// ── Vectorized Endpoints ──────────────────────────────────────────────────────
+
+message VectorResetRequest {
+  int32 num_envs = 1;
+  string city = 2;
+  float spawn_rate_factor = 3;
+}
+
+message VectorResetResponse {
+  // obs length = num_envs * obs_dim
+  repeated float obs  = 1 [packed = true];
+  // mask length = num_envs * sum(action_dims)
+  repeated bool  mask = 2 [packed = true];
+}
+
+
 // ── RunEpisode ────────────────────────────────────────────────────────────────
 
 message ActionRequest {
@@ -85,6 +104,33 @@ message StepResponse {
   bool   game_over             = 9;
   bool   in_upgrade_modal      = 10;
 }
+
+message VectorActionRequest {
+  // length = num_envs * 4
+  repeated int32 actions = 1 [packed = true];
+}
+
+message VectorStepResponse {
+  // All vectors are packed and map to the N environments.
+  repeated float obs  = 1 [packed = true]; // length = N * obs_dim
+  repeated bool  mask = 2 [packed = true]; // length = N * sum(action_dims)
+  repeated double reward = 3 [packed = true]; // length = N
+  repeated bool   done   = 4 [packed = true]; // length = N
+
+  // SB3 requires the terminal observation when returning an auto-reset obs.
+  // When done[i] is true, terminal_obs contains the ending game state.
+  // Otherwise, its values are arbitrary (usually 0).
+  repeated float terminal_obs = 5 [packed = true]; // length = N * obs_dim
+
+  // Info fields
+  repeated int32  score                 = 6 [packed = true];
+  repeated int32  passengers_delivered  = 7 [packed = true];
+  repeated int32  week                  = 8 [packed = true];
+  repeated int32  stations              = 9 [packed = true];
+  repeated bool   game_over             = 10 [packed = true];
+  repeated bool   in_upgrade_modal      = 11 [packed = true];
+}
+
 
 // ── Inference ────────────────────────────────────────────────────────────────
 

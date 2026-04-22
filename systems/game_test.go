@@ -241,6 +241,27 @@ func TestProcessPassengers_BoardingFillsCapacity(t *testing.T) {
 	}
 }
 
+func TestCanBoard_ShortRecomputedPathDoesNotPanic(t *testing.T) {
+	g := newTestGame()
+	gs := newTestGameState()
+
+	circle := components.NewStation(0, 0, 0, "circle")
+	triangle := components.NewStation(1, 100, 0, "triangle")
+	gs.Stations = []*components.Station{circle, triangle}
+
+	line := newConnectedLine("#ff0000", 0, circle, triangle)
+	gs.Lines = []*components.Line{line}
+	gs.GraphDirty = true
+
+	p := components.NewPassenger(circle, "circle", 0)
+	p.CurrentStation = circle
+	p.PathIndex = 99
+
+	if canBoard(g.GraphManager, gs, p, []*components.Station{triangle}, 0) {
+		t.Fatal("passenger with only a current-station path should not board")
+	}
+}
+
 func TestProcessPassengers_ScoreIncrements(t *testing.T) {
 	g := newTestGame()
 	gs := newTestGameState()

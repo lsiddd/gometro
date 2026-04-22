@@ -25,6 +25,8 @@ type RLEnv struct {
 	// Reward tracking: compare current tick against previous values.
 	prevDelivered int
 	prevWeek      int
+	lastReward    RewardBreakdown
+	lastValid     bool
 
 	// Upgrade modal state.
 	inUpgradeModal bool
@@ -44,14 +46,16 @@ func NewRLEnv() *RLEnv {
 func (e *RLEnv) Reset(city string, spawnRateFactor float64) (obs []float32, mask []bool) {
 	e.gs = state.NewGameState()
 	e.gs.SelectedCity = city
+	e.game = systems.NewGame()
+	e.game.InitGame(e.gs, systems.SimScreenWidth, systems.SimScreenHeight)
 	if spawnRateFactor > 0 {
 		e.gs.SpawnRateFactor = spawnRateFactor
 	}
-	e.game = systems.NewGame()
-	e.game.InitGame(e.gs, systems.SimScreenWidth, systems.SimScreenHeight)
 
 	e.prevDelivered = 0
 	e.prevWeek = e.gs.Week
+	e.lastReward = RewardBreakdown{}
+	e.lastValid = true
 	e.inUpgradeModal = false
 	e.upgradeChoices = nil
 
@@ -105,7 +109,10 @@ func (e *RLEnv) Step(action []int) (obs []float32, reward float64, done bool, ma
 	reward = e.computeReward(done)
 	if !validAction {
 		reward -= rewardInvalidAction
+		e.lastReward.InvalidAction = rewardInvalidAction
 	}
+	e.lastReward.Total = reward
+	e.lastValid = validAction
 	e.prevDelivered = gs.PassengersDelivered
 	e.prevWeek = gs.Week
 
@@ -140,14 +147,25 @@ func (e *RLEnv) runFrames() (gameOver bool) {
 // Reward shaping coefficients. All tunable values are centralised here so
 // experiments require no recompile of unrelated code — change a constant, run.
 const (
-	rewardPerPassenger   = 1.0    // dense delivery signal per passenger delivered
-	rewardOvercrowdCoeff = 0.05   // continuous penalty × Σ(overcrowdProgress/OvercrowdTime)
-	rewardDangerThresh   = 0.80   // overcrowd fraction at which a station is "in danger"
-	rewardDangerPenalty  = 0.5    // penalty per station above danger threshold
-	rewardWeekBonus      = 2.0    // bonus for surviving each new week (was 0.1 — too weak vs passenger signal)
-	rewardTerminalPenalty = 1000.0 // subtracted on game-over to strongly discourage loss
-	rewardInvalidAction  = 0.1    // penalty for an invalid MultiDiscrete combination
+	rewardPerPassenger    = 5.0   // dense delivery signal (increased to strongly incentivize throughput)
+	rewardOvercrowdCoeff  = 0.02  // continuous penalty (reduced)
+	rewardDangerThresh    = 0.80  // overcrowd fraction at which a station is "in danger"
+	rewardDangerPenalty   = 0.1   // per-station penalty when in danger (drastically reduced to prevent suicide vs terminal)
+	rewardWeekBonus       = 20.0  // bonus for surviving each new week (scaled up)
+	rewardTerminalPenalty = 100.0 // subtracted on loss (reduced so it's relatively worse to die than face temporary danger)
+	rewardInvalidAction   = 1.0   // penalty for an invalid MultiDiscrete combination
 )
+
+// RewardBreakdown stores the components of the most recent transition reward.
+type RewardBreakdown struct {
+	Delivered     float64
+	Overcrowd     float64
+	Danger        float64
+	Week          float64
+	Terminal      float64
+	InvalidAction float64
+	Total         float64
+}
 
 // computeReward returns the shaped reward for the last transition.
 //
@@ -185,7 +203,14 @@ func (e *RLEnv) computeReward(done bool) float64 {
 		terminal = rewardTerminalPenalty
 	}
 
-	return delivered*rewardPerPassenger - overcrowdSum*rewardOvercrowdCoeff - dangerCount*rewardDangerPenalty + weekBonus - terminal
+	e.lastReward = RewardBreakdown{
+		Delivered: delivered * rewardPerPassenger,
+		Overcrowd: overcrowdSum * rewardOvercrowdCoeff,
+		Danger:    dangerCount * rewardDangerPenalty,
+		Week:      weekBonus,
+		Terminal:  terminal,
+	}
+	return e.lastReward.Delivered - e.lastReward.Overcrowd - e.lastReward.Danger + e.lastReward.Week - e.lastReward.Terminal
 }
 
 // Info returns a map of diagnostic values for the current step. Included in
@@ -193,11 +218,18 @@ func (e *RLEnv) computeReward(done bool) float64 {
 func (e *RLEnv) Info() map[string]any {
 	gs := e.gs
 	return map[string]any{
-		"week":                gs.Week,
-		"score":               gs.Score,
+		"week":                 gs.Week,
+		"score":                gs.Score,
 		"passengers_delivered": gs.PassengersDelivered,
-		"stations":            len(gs.Stations),
-		"game_over":           gs.GameOver,
-		"in_upgrade_modal":    e.inUpgradeModal,
+		"stations":             len(gs.Stations),
+		"game_over":            gs.GameOver,
+		"in_upgrade_modal":     e.inUpgradeModal,
+		"valid_action":         e.lastValid,
+		"reward_delivered":     e.lastReward.Delivered,
+		"reward_overcrowd":     e.lastReward.Overcrowd,
+		"reward_danger":        e.lastReward.Danger,
+		"reward_week":          e.lastReward.Week,
+		"reward_terminal":      e.lastReward.Terminal,
+		"reward_invalid":       e.lastReward.InvalidAction,
 	}
 }

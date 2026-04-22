@@ -25,7 +25,7 @@ import torch.nn as nn
 
 from sb3_contrib import MaskablePPO
 
-from constants import ACTION_DIMS, OBS_DIM
+from constants import ACTION_DIMS
 from models import MetroFeatureExtractor
 
 
@@ -121,7 +121,8 @@ def export(model_path: str, output_path: str) -> None:
     actor.eval()
 
     mask_dim = sum(ACTION_DIMS)
-    dummy_obs  = torch.zeros(1, OBS_DIM,   dtype=torch.float32)
+    obs_shape = model.observation_space.shape
+    dummy_obs  = torch.zeros((1, *obs_shape), dtype=torch.float32)
     dummy_mask = torch.ones(1,  mask_dim,  dtype=torch.float32)
 
     torch.onnx.export(

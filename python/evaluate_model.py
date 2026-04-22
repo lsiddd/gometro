@@ -7,6 +7,7 @@ from sb3_contrib import MaskablePPO
 
 from constants import TRAIN_BASE_PORT
 from env import MiniMetroEnv
+from models import MetroFeatureExtractor
 
 # Evaluation runs on a port well above any training/pretrain range to avoid
 # conflicts when running alongside an active training session.
@@ -15,7 +16,10 @@ EVAL_PORT = TRAIN_BASE_PORT + 100
 
 def evaluate(model_path: str, n_episodes: int, port: int) -> None:
     print(f"Loading model from {model_path}...")
-    model = MaskablePPO.load(model_path)
+    model = MaskablePPO.load(
+        model_path,
+        custom_objects={"MetroFeatureExtractor": MetroFeatureExtractor},
+    )
     env = MiniMetroEnv(port=port, managed=True)
 
     scores = []

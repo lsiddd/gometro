@@ -56,6 +56,16 @@ class RLEnvStub(object):
                 request_serializer=rl_dot_proto_dot_minimetro__pb2.ActionRequest.SerializeToString,
                 response_deserializer=rl_dot_proto_dot_minimetro__pb2.StepResponse.FromString,
                 _registered_method=True)
+        self.ResetVector = channel.unary_unary(
+                '/rl.RLEnv/ResetVector',
+                request_serializer=rl_dot_proto_dot_minimetro__pb2.VectorResetRequest.SerializeToString,
+                response_deserializer=rl_dot_proto_dot_minimetro__pb2.VectorResetResponse.FromString,
+                _registered_method=True)
+        self.RunVectorEpisode = channel.stream_stream(
+                '/rl.RLEnv/RunVectorEpisode',
+                request_serializer=rl_dot_proto_dot_minimetro__pb2.VectorActionRequest.SerializeToString,
+                response_deserializer=rl_dot_proto_dot_minimetro__pb2.VectorStepResponse.FromString,
+                _registered_method=True)
 
 
 class RLEnvServicer(object):
@@ -93,6 +103,19 @@ class RLEnvServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ResetVector(self, request, context):
+        """Vectorized endpoints for scaling throughput.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RunVectorEpisode(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RLEnvServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -110,6 +133,16 @@ def add_RLEnvServicer_to_server(servicer, server):
                     servicer.RunEpisode,
                     request_deserializer=rl_dot_proto_dot_minimetro__pb2.ActionRequest.FromString,
                     response_serializer=rl_dot_proto_dot_minimetro__pb2.StepResponse.SerializeToString,
+            ),
+            'ResetVector': grpc.unary_unary_rpc_method_handler(
+                    servicer.ResetVector,
+                    request_deserializer=rl_dot_proto_dot_minimetro__pb2.VectorResetRequest.FromString,
+                    response_serializer=rl_dot_proto_dot_minimetro__pb2.VectorResetResponse.SerializeToString,
+            ),
+            'RunVectorEpisode': grpc.stream_stream_rpc_method_handler(
+                    servicer.RunVectorEpisode,
+                    request_deserializer=rl_dot_proto_dot_minimetro__pb2.VectorActionRequest.FromString,
+                    response_serializer=rl_dot_proto_dot_minimetro__pb2.VectorStepResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -200,6 +233,60 @@ class RLEnv(object):
             '/rl.RLEnv/RunEpisode',
             rl_dot_proto_dot_minimetro__pb2.ActionRequest.SerializeToString,
             rl_dot_proto_dot_minimetro__pb2.StepResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ResetVector(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rl.RLEnv/ResetVector',
+            rl_dot_proto_dot_minimetro__pb2.VectorResetRequest.SerializeToString,
+            rl_dot_proto_dot_minimetro__pb2.VectorResetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunVectorEpisode(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_stream(
+            request_iterator,
+            target,
+            '/rl.RLEnv/RunVectorEpisode',
+            rl_dot_proto_dot_minimetro__pb2.VectorActionRequest.SerializeToString,
+            rl_dot_proto_dot_minimetro__pb2.VectorStepResponse.FromString,
             options,
             channel_credentials,
             insecure,

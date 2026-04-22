@@ -37,6 +37,11 @@ func BuildActionMaskMulti(env *RLEnv) []bool {
 	// any independent dimension slot that could hypothetically be valid.
 	if env.inUpgradeModal {
 		mask[ActChooseUpgrade] = true
+		// Keep irrelevant parameter heads non-empty. The environment ignores
+		// line/station during upgrade selection, but all-masked categoricals add
+		// artificial log-probability/entropy noise in the policy.
+		mask[NumActionCats] = true
+		mask[NumActionCats+MaxLineSlots] = true
 		for i, choice := range env.upgradeChoices {
 			if i < 2 && choice != "" {
 				mask[14+7+50+i] = true // unmask option
@@ -48,13 +53,66 @@ func BuildActionMaskMulti(env *RLEnv) []bool {
 	// Always allow NoOp
 	mask[ActNoOp] = true
 
-	// Mask action categories broadly
-	mask[ActAddEndpoint] = true
-	mask[ActRemoveEndpoint] = true
-	mask[ActCloseLoop] = true
-	mask[ActOpenLoop] = true
-	mask[ActSwapEndpoint] = true
-	mask[ActInsertIntoLoop] = true
+	canAddEndpoint := false
+	canRemoveEndpoint := false
+	canCloseLoop := false
+	canOpenLoop := false
+	canSwapEndpoint := false
+	canInsertIntoLoop := false
+
+	for l := 0; l < gs.AvailableLines && l < len(gs.Lines); l++ {
+		line := gs.Lines[l]
+		if line.MarkedForDeletion {
+			continue
+		}
+		n := len(line.Stations)
+		isActive := line.Active
+
+		if !isActive {
+			canAddEndpoint = true
+			continue
+		}
+
+		isLoop := isActive && n > 2 && line.Stations[0] == line.Stations[n-1]
+		if !isLoop {
+			canAddEndpoint = true
+		}
+		if n >= 3 && !isLoop {
+			canRemoveEndpoint = true
+		}
+		if n >= 3 && !isLoop {
+			canCloseLoop = true
+		}
+		if isLoop {
+			canOpenLoop = true
+		}
+		if n >= 2 && !isLoop {
+			canSwapEndpoint = true
+		}
+		if isLoop && n >= 4 {
+			canInsertIntoLoop = true
+		}
+	}
+
+	if canAddEndpoint {
+		mask[ActAddEndpoint] = true
+	}
+	if canRemoveEndpoint {
+		mask[ActRemoveEndpoint] = true
+	}
+	if canCloseLoop {
+		mask[ActCloseLoop] = true
+	}
+	if canOpenLoop {
+		mask[ActOpenLoop] = true
+	}
+	if canSwapEndpoint {
+		mask[ActSwapEndpoint] = true
+	}
+	if canInsertIntoLoop {
+		mask[ActInsertIntoLoop] = true
+	}
+
 	if gs.AvailableTrains > 0 {
 		mask[ActDeployTrain] = true
 	}
@@ -65,7 +123,7 @@ func BuildActionMaskMulti(env *RLEnv) []bool {
 		mask[ActUpgradeInterchange] = true
 	}
 
-	// Mask Lines 
+	// Mask Lines
 	nLines := gs.AvailableLines
 	if nLines > len(gs.Lines) {
 		nLines = len(gs.Lines)
@@ -76,14 +134,14 @@ func BuildActionMaskMulti(env *RLEnv) []bool {
 		}
 	}
 
-	// Mask Stations 
+	// Mask Stations
 	for s := 0; s < MaxStationSlots; s++ {
 		if s < len(gs.Stations) {
 			mask[14+7+s] = true
 		}
 	}
 
-	// Mask options (Head/Tail) 
+	// Mask options (Head/Tail)
 	mask[14+7+50+0] = true
 	mask[14+7+50+1] = true
 
@@ -244,14 +302,22 @@ func ApplyRLAction(env *RLEnv, action []int) bool {
 		if pos <= 0 {
 			pos = 1
 		}
-		// check bridges 
+		// check bridges
 		prev := line.Stations[pos-1]
 		next := line.Stations[pos]
 		cost := 0
-		if systems.CheckRiverCrossing(gs, prev, st) { cost++ }
-		if systems.CheckRiverCrossing(gs, st, next) { cost++ }
-		if systems.CheckRiverCrossing(gs, prev, next) { cost-- }
-		if cost < 0 { cost = 0 }
+		if systems.CheckRiverCrossing(gs, prev, st) {
+			cost++
+		}
+		if systems.CheckRiverCrossing(gs, st, next) {
+			cost++
+		}
+		if systems.CheckRiverCrossing(gs, prev, next) {
+			cost--
+		}
+		if cost < 0 {
+			cost = 0
+		}
 		if gs.Bridges < cost {
 			return false
 		}
@@ -316,7 +382,7 @@ func ApplyRLAction(env *RLEnv, action []int) bool {
 		return true
 
 	case ActChooseUpgrade:
-		return false 
+		return false
 	}
 
 	return false

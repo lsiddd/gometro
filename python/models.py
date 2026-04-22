@@ -5,6 +5,8 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 from constants import GLOBAL_DIM, STATION_DIM, NUM_STATIONS, LINE_DIM, NUM_LINES
 
+torch.set_float32_matmul_precision("highest")
+
 # Embedding dimensions — decoupled from the observation dims for easy tuning.
 _D_STATION  = 128  # station node embedding
 _D_LINE     = 128  # line embedding
@@ -50,40 +52,64 @@ class MetroFeatureExtractor(BaseFeaturesExtractor):
         self.num_stations = NUM_STATIONS
         self.line_dim     = LINE_DIM
         self.num_lines    = NUM_LINES
+
+        self.obs_dim = (
+            GLOBAL_DIM
+            + NUM_STATIONS * STATION_DIM
+            + NUM_LINES * LINE_DIM
+            + NUM_STATIONS * NUM_LINES
+        )
+
+        shape = observation_space.shape
+        self.n_stack = 1
+        self.channels_first = False
+        self.flat_stack = False
+
+        if len(shape) == 2:
+            if shape[0] == self.obs_dim:
+                self.n_stack = shape[1]
+                self.channels_first = False
+                self.flat_stack = False
+            elif shape[1] == self.obs_dim:
+                self.n_stack = shape[0]
+                self.channels_first = True
+                self.flat_stack = False
+        elif len(shape) == 1:
+            if shape[0] % self.obs_dim != 0:
+                raise ValueError(
+                    f"Observation dim {shape[0]} is not a multiple of base obs dim {self.obs_dim}"
+                )
+            self.n_stack = shape[0] // self.obs_dim
+            self.channels_first = False
+            self.flat_stack = True
+
         D_S = _D_STATION
         D_L = _D_LINE
 
-        # --- Station path ---
-        # Per-station MLP replaces the Transformer encoder. Cross-station
-        # relational reasoning is handled entirely by the MP rounds below,
-        # which use the actual line topology as the adjacency structure.
-        # A dense Transformer here would redo that work at O(N²) cost.
         self.station_embed = nn.Sequential(
-            nn.Linear(STATION_DIM, D_S),
+            nn.Linear(STATION_DIM * self.n_stack, D_S),
             nn.ReLU(),
             nn.Linear(D_S, D_S),
             nn.ReLU(),
         )
 
-        # Separate update MLP per message-passing round so each round can
-        # learn a distinct aggregation function (weight-untied).
         self.mp_updates = nn.ModuleList([
             nn.Sequential(nn.Linear(D_S * 2, D_S), nn.ReLU())
             for _ in range(_MP_ROUNDS)
         ])
 
-        # --- Line path ---
-        self.line_embed = nn.Linear(LINE_DIM, D_L)
+        self.line_embed = nn.Linear(LINE_DIM * self.n_stack, D_L)
         self.line_station_proj = nn.Linear(D_S, D_L)
 
-        # --- MLP head ---
-        # global(15) + station_pool(D_S) + line_flat(NUM_LINES * 2*D_L)
-        combined_dim = GLOBAL_DIM + D_S + NUM_LINES * D_L * 2
+        combined_dim = (GLOBAL_DIM * self.n_stack) + D_S + NUM_LINES * D_L * 2
         self.mlp = nn.Sequential(
             nn.Linear(combined_dim, features_dim),
             nn.ReLU(),
         )
 
+    # torch.compile can diverge slightly on this CPU-heavy graph due to matmul
+    # kernel choices; training does not rely on compiling the extractor.
+    @torch._dynamo.disable
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         b = observations.shape[0]
         N = self.num_stations
@@ -91,35 +117,53 @@ class MetroFeatureExtractor(BaseFeaturesExtractor):
         D_S = _D_STATION
         D_L = _D_LINE
 
-        # Unpack flat observation vector
+        if self.n_stack > 1:
+            if self.channels_first:
+                obs_seq = observations.view(b, self.n_stack, self.obs_dim)
+            elif self.flat_stack:
+                obs_seq = observations.view(b, self.n_stack, self.obs_dim)
+            else:
+                raw = observations.view(b, self.obs_dim, self.n_stack)
+                obs_seq = raw.permute(0, 2, 1)
+        else:
+            obs_seq = observations.unsqueeze(1)
+
         idx = 0
-        globals_ft = observations[:, idx:idx + self.global_dim]
+
+        globals_ft = obs_seq[:, :, idx:idx + self.global_dim].reshape(b, -1)
         idx += self.global_dim
 
-        stations_ft = observations[:, idx:idx + N * self.station_dim].view(b, N, self.station_dim)
+        stations_ft = obs_seq[:, :, idx:idx + N * self.station_dim]
+        stations_ft = (
+            stations_ft.view(b, self.n_stack, N, self.station_dim)
+            .permute(0, 2, 1, 3)
+            .reshape(b, N, -1)
+        )
         idx += N * self.station_dim
 
-        lines_ft = observations[:, idx:idx + L * self.line_dim].view(b, L, self.line_dim)
+        lines_ft = obs_seq[:, :, idx:idx + L * self.line_dim]
+        lines_ft = (
+            lines_ft.view(b, self.n_stack, L, self.line_dim)
+            .permute(0, 2, 1, 3)
+            .reshape(b, L, -1)
+        )
         idx += L * self.line_dim
 
-        topology = observations[:, idx:idx + L * N].view(b, L, N)  # [B, L, N] binary
+        # Topology is static relative to instantaneous validity, take most recent frame
+        topology = obs_seq[:, -1, idx:idx + L * N].view(b, L, N)
 
         # ── Station path ─────────────────────────────────────────────────────
         h = self.station_embed(stations_ft)       # [B, N, D_S]
 
-        # Shared-line adjacency (computed once, reused across MP rounds).
-        # adj[b,i,j] = number of lines connecting stations i and j.
         topo_t = topology.permute(0, 2, 1).float()   # [B, N, L]
         adj    = topo_t @ topology.float()            # [B, N, N]
         row_sum  = adj.sum(dim=-1, keepdim=True).clamp(min=1.0)
-        adj_norm = adj / row_sum                      # [B, N, N]  row-normalised
+        adj_norm = adj / row_sum                      # [B, N, N]
 
-        # _MP_ROUNDS rounds of neighbourhood aggregation (weight-untied).
         for mp_update in self.mp_updates:
             agg = adj_norm @ h                        # [B, N, D_S]
             h   = mp_update(torch.cat([h, agg], dim=-1))  # [B, N, D_S]
 
-        # Global station readout
         station_pool = h.mean(dim=1)                  # [B, D_S]
 
         # ── Line path ────────────────────────────────────────────────────────

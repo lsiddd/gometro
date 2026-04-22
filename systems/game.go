@@ -654,7 +654,7 @@ func canBoard(gm *graph.GraphManager, gs *state.GameState, p *components.Passeng
 		p.Path = graph.FindPath(gm, gs, p.CurrentStation, p.Destination)
 		p.PathIndex = 1
 		p.LastRouteCalculation = nowMs
-		if p.Path == nil {
+		if p.Path == nil || p.PathIndex >= len(p.Path) {
 			return false
 		}
 	}
@@ -816,12 +816,12 @@ func (g *Game) getNewStationType(gs *state.GameState, nowMs float64) config.Stat
 	if total > 0 {
 		probCircle = float64(sq+t) / float64(2*total)
 	}
-	
+
 	val := rand.Float64()
 	if val < probCircle {
 		return config.Circle
 	}
-	
+
 	if rand.Float64() < 0.75 {
 		return config.Triangle
 	}
