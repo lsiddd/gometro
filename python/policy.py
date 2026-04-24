@@ -30,7 +30,17 @@ from torch.distributions import Categorical
 from sb3_contrib.common.maskable.policies import MaskableActorCriticPolicy
 from stable_baselines3.common.type_aliases import Schedule
 
-from constants import ACTION_DIMS
+from constants import (
+    ACTION_DIMS,
+    BASE_MASK_SIZE,
+    COND_LINE_OFFSET,
+    COND_STATION_OFFSET,
+    COND_OPTION_OFFSET,
+    MAX_LINE_SLOTS,
+    MAX_STATION_SLOTS,
+    NUM_ACTION_CATS,
+    NUM_OPTIONS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -102,9 +112,18 @@ class AutoregressiveDistribution:
     # ------------------------------------------------------------------
 
     def apply_masking(self, masks: Optional[np.ndarray | torch.Tensor]) -> None:
-        """Split flat boolean mask [B, sum(dims)] into one slice per head."""
+        """Split flat boolean mask into base and conditional head masks.
+
+        The first BASE_MASK_SIZE entries are the standard independent
+        MultiDiscrete masks. Extra sections carry per-action-category masks for
+        line, station and option heads. Older masks still work because the base
+        masks are used as a fallback.
+        """
         if masks is None:
             self._masks = None
+            self._cond_line_masks = None
+            self._cond_station_masks = None
+            self._cond_option_masks = None
             return
         if isinstance(masks, np.ndarray):
             masks = torch.as_tensor(masks, device=self.latent_pi.device)
@@ -114,6 +133,20 @@ class AutoregressiveDistribution:
         for d in self.action_net.action_dims:
             self._masks.append(masks[:, offset:offset + d])
             offset += d
+        self._cond_line_masks = None
+        self._cond_station_masks = None
+        self._cond_option_masks = None
+        if masks.shape[1] >= COND_OPTION_OFFSET + NUM_ACTION_CATS * NUM_OPTIONS:
+            b = masks.shape[0]
+            self._cond_line_masks = masks[
+                :, COND_LINE_OFFSET:COND_STATION_OFFSET
+            ].reshape(b, NUM_ACTION_CATS, MAX_LINE_SLOTS)
+            self._cond_station_masks = masks[
+                :, COND_STATION_OFFSET:COND_OPTION_OFFSET
+            ].reshape(b, NUM_ACTION_CATS, MAX_LINE_SLOTS, MAX_STATION_SLOTS)
+            self._cond_option_masks = masks[
+                :, COND_OPTION_OFFSET:COND_OPTION_OFFSET + NUM_ACTION_CATS * NUM_OPTIONS
+            ].reshape(b, NUM_ACTION_CATS, NUM_OPTIONS)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -123,6 +156,39 @@ class AutoregressiveDistribution:
         if self._masks is not None:
             raw_logits = raw_logits.masked_fill(~self._masks[head_idx], -1e9)
         return raw_logits
+
+    def _conditional_mask(
+        self,
+        head_idx: int,
+        act_cat: torch.Tensor,
+        line_idx: Optional[torch.Tensor] = None,
+    ) -> Optional[torch.Tensor]:
+        table = None
+        if head_idx == 1:
+            table = self._cond_line_masks
+        elif head_idx == 2:
+            table = self._cond_station_masks
+        elif head_idx == 3:
+            table = self._cond_option_masks
+        if table is None:
+            return None
+        batch_idx = torch.arange(act_cat.shape[0], device=act_cat.device)
+        if head_idx == 2 and line_idx is not None:
+            return table[batch_idx, act_cat.long(), line_idx.long()]
+        return table[batch_idx, act_cat.long()]
+
+    def _masked_logits_for_context(
+        self,
+        raw_logits: torch.Tensor,
+        head_idx: int,
+        act_cat: Optional[torch.Tensor],
+        line_idx: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if head_idx > 0 and act_cat is not None:
+            cond = self._conditional_mask(head_idx, act_cat, line_idx)
+            if cond is not None:
+                return raw_logits.masked_fill(~cond, -1e9)
+        return self._masked_logits(raw_logits, head_idx)
 
     def _build_context(self, latent_pi: torch.Tensor, prev_actions: list[torch.Tensor]) -> torch.Tensor:
         """Concatenate latent_pi with embeddings of all previous actions."""
@@ -150,7 +216,11 @@ class AutoregressiveDistribution:
         context = latent
 
         for i in range(len(net.action_dims)):
-            logits = self._masked_logits(net.heads[i](context), i)
+            act_cat = actions[:, 0] if i > 0 else None
+            line_idx = actions[:, 1] if i > 1 else None
+            logits = self._masked_logits_for_context(
+                net.heads[i](context), i, act_cat, line_idx
+            )
             dist   = Categorical(logits=logits)
             dists.append(dist)
             total  = total + dist.log_prob(actions[:, i])
@@ -192,7 +262,11 @@ class AutoregressiveDistribution:
         sampled = []
 
         for i in range(len(net.action_dims)):
-            logits = self._masked_logits(net.heads[i](context), i)
+            act_cat = sampled[0].squeeze(-1) if i > 0 and sampled else None
+            line_idx = sampled[1].squeeze(-1) if i > 1 and len(sampled) > 1 else None
+            logits = self._masked_logits_for_context(
+                net.heads[i](context), i, act_cat, line_idx
+            )
             dist   = Categorical(logits=logits)
             a_i    = dist.mode if deterministic else dist.sample()
             sampled.append(a_i.unsqueeze(-1))

@@ -6,7 +6,7 @@ so the inference server needs no PyTorch dependency at runtime.
 
 Inputs:
     obs   – float32[batch, OBS_DIM]
-    mask  – float32[batch, sum(ACTION_DIMS)]   1.0=valid, 0.0=invalid
+    mask  – float32[batch, MASK_SIZE]          1.0=valid, 0.0=invalid
 
 Output:
     action – int64[batch, 4]                   [category, line, station, option]
@@ -25,7 +25,16 @@ import torch.nn as nn
 
 from sb3_contrib import MaskablePPO
 
-from constants import ACTION_DIMS
+from constants import (
+    ACTION_DIMS,
+    MASK_SIZE,
+    COND_LINE_OFFSET,
+    COND_STATION_OFFSET,
+    COND_OPTION_OFFSET,
+    MAX_LINE_SLOTS,
+    MAX_STATION_SLOTS,
+    NUM_OPTIONS,
+)
 from models import MetroFeatureExtractor
 
 
@@ -48,13 +57,14 @@ class MaskedActor(nn.Module):
         """
         Args:
             obs:  float32 [B, OBS_DIM]
-            mask: float32 [B, sum(ACTION_DIMS)]  — 1.0 valid, 0.0 invalid
+            mask: float32 [B, MASK_SIZE]  — 1.0 valid, 0.0 invalid
         Returns:
             int64 [B, 4]
         """
         features = self.features_extractor(obs)
         latent_pi = self.mlp_extractor.forward_actor(features)
         logits = self.action_net(latent_pi)                    # [B, 73]
+        mask = mask[:, :sum(self.splits)]
         masked = logits + (mask - 1.0) * 1e9                  # -1e9 for invalid
         parts = torch.split(masked, self.splits, dim=-1)
         actions = [p.argmax(dim=-1, keepdim=True) for p in parts]
@@ -78,7 +88,7 @@ class AutoregressiveActor(nn.Module):
         """
         Args:
             obs:  float32 [B, OBS_DIM]
-            mask: float32 [B, sum(ACTION_DIMS)]  — 1.0 valid, 0.0 invalid
+            mask: float32 [B, MASK_SIZE]  — 1.0 valid, 0.0 invalid
         Returns:
             int64 [B, 4]
         """
@@ -93,7 +103,33 @@ class AutoregressiveActor(nn.Module):
 
         for i in range(len(net.action_dims)):
             logits     = net.heads[i](context)
-            mask_slice = mask_bool[:, offset:offset + net.action_dims[i]]
+            if i == 1:
+                act = sampled[0].squeeze(-1)
+                mask_table = mask_bool[
+                    :, COND_LINE_OFFSET:COND_STATION_OFFSET
+                ].reshape(-1, net.action_dims[0], MAX_LINE_SLOTS)
+                mask_slice = mask_table[
+                    torch.arange(mask_table.shape[0], device=act.device), act
+                ]
+            elif i == 2:
+                act = sampled[0].squeeze(-1)
+                line = sampled[1].squeeze(-1)
+                mask_table = mask_bool[
+                    :, COND_STATION_OFFSET:COND_OPTION_OFFSET
+                ].reshape(-1, net.action_dims[0], MAX_LINE_SLOTS, MAX_STATION_SLOTS)
+                mask_slice = mask_table[
+                    torch.arange(mask_table.shape[0], device=act.device), act, line
+                ]
+            elif i == 3:
+                act = sampled[0].squeeze(-1)
+                mask_table = mask_bool[
+                    :, COND_OPTION_OFFSET:COND_OPTION_OFFSET + net.action_dims[0] * NUM_OPTIONS
+                ].reshape(-1, net.action_dims[0], NUM_OPTIONS)
+                mask_slice = mask_table[
+                    torch.arange(mask_table.shape[0], device=act.device), act
+                ]
+            else:
+                mask_slice = mask_bool[:, offset:offset + net.action_dims[i]]
             logits     = logits.masked_fill(~mask_slice, -1e9)
             offset    += net.action_dims[i]
             a_i        = logits.argmax(dim=-1)
@@ -120,7 +156,7 @@ def export(model_path: str, output_path: str) -> None:
     actor = _make_actor(model.policy)
     actor.eval()
 
-    mask_dim = sum(ACTION_DIMS)
+    mask_dim = MASK_SIZE
     obs_shape = model.observation_space.shape
     dummy_obs  = torch.zeros((1, *obs_shape), dtype=torch.float32)
     dummy_mask = torch.ones(1,  mask_dim,  dtype=torch.float32)
