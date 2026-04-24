@@ -16,13 +16,53 @@ from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from stable_baselines3.common.vec_env.base_vec_env import VecEnvStepReturn
 
-from constants import OBS_DIM, ACTION_DIMS, validate_server_constants
+from constants import (
+    OBS_DIM,
+    ACTION_DIMS,
+    MASK_SIZE,
+    COND_LINE_OFFSET,
+    COND_STATION_OFFSET,
+    COND_OPTION_OFFSET,
+    MAX_LINE_SLOTS,
+    MAX_STATION_SLOTS,
+    NUM_ACTION_CATS,
+    NUM_OPTIONS,
+    validate_server_constants,
+)
 from rl.proto import minimetro_pb2 as pb
 from rl.proto import minimetro_pb2_grpc as pb_grpc
 
 _DEFAULT_BINARY = os.path.join(os.path.dirname(__file__), "..", "rl_server")
-_MASK_SIZE = sum(ACTION_DIMS)
+_MASK_SIZE = MASK_SIZE
 _STEP_TIMEOUT_S = float(os.environ.get("MINIMETRO_STEP_TIMEOUT", "30"))
+
+
+def _actions_valid_for_masks(actions: np.ndarray, masks: np.ndarray) -> np.ndarray:
+    """Validate [act, line, station, option] against conditional masks."""
+    actions = np.asarray(actions, dtype=np.int64).reshape((-1, len(ACTION_DIMS)))
+    masks = np.asarray(masks, dtype=bool).reshape((actions.shape[0], _MASK_SIZE))
+    valid = np.ones(actions.shape[0], dtype=bool)
+    for i, (act, line, station, option) in enumerate(actions):
+        if not (0 <= act < NUM_ACTION_CATS and masks[i, act]):
+            valid[i] = False
+            continue
+        line_off = COND_LINE_OFFSET + act * MAX_LINE_SLOTS + line
+        station_off = (
+            COND_STATION_OFFSET
+            + ((act * MAX_LINE_SLOTS + line) * MAX_STATION_SLOTS)
+            + station
+        )
+        option_off = COND_OPTION_OFFSET + act * NUM_OPTIONS + option
+        if not (
+            0 <= line < MAX_LINE_SLOTS
+            and 0 <= station < MAX_STATION_SLOTS
+            and 0 <= option < NUM_OPTIONS
+            and masks[i, line_off]
+            and masks[i, station_off]
+            and masks[i, option_off]
+        ):
+            valid[i] = False
+    return valid
 
 class MiniMetroVecEnv(VecEnv):
     def __init__(
@@ -124,6 +164,11 @@ class MiniMetroVecEnv(VecEnv):
         self._actions_buffer = actions
 
     def step_wait(self) -> VecEnvStepReturn:
+        prev_mask = self._mask.copy()
+        actions_for_info = np.asarray(self._actions_buffer, dtype=np.int64).reshape(
+            self.num_envs, len(ACTION_DIMS)
+        )
+        valid_actions = _actions_valid_for_masks(actions_for_info, prev_mask)
         flat_actions = self._actions_buffer.flatten().tolist()
         t0 = time.perf_counter()
         self._action_queue.put(flat_actions)
@@ -172,6 +217,8 @@ class MiniMetroVecEnv(VecEnv):
                 "stations": stations[i],
                 "game_over": game_over[i],
                 "in_upgrade_modal": in_modal[i],
+                "valid_action": bool(valid_actions[i]),
+                "invalid_action": float(not valid_actions[i]),
             }
             if dones[i] and terminal_obs is not None:
                 info["terminal_observation"] = terminal_obs[i]

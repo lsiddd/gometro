@@ -34,11 +34,12 @@ torch.set_num_threads(int(_N_CPU))
 # if invoked after torch is already initialized (which it is via the imports above).
 
 from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.buffers import MaskableRolloutBuffer
 from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import VecMonitor
 
-from constants import TRAIN_BASE_PORT
+from constants import MASK_SIZE, TRAIN_BASE_PORT
 from env import MiniMetroVecEnv
 from models import MetroFeatureExtractor
 from policy import MetroPolicy
@@ -96,6 +97,18 @@ class LinearLRSchedule:
 lr_schedule = LinearLRSchedule()
 
 
+class ConditionalMaskRolloutBuffer(MaskableRolloutBuffer):
+    """Rollout buffer that stores the expanded conditional action mask."""
+
+    def reset(self) -> None:
+        self.mask_dims = MASK_SIZE
+        self.action_masks = np.ones(
+            (self.buffer_size, self.n_envs, self.mask_dims),
+            dtype=np.bool_,
+        )
+        super(MaskableRolloutBuffer, self).reset()
+
+
 def trace(msg: str) -> None:
     print(f"[trace {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -122,6 +135,7 @@ class CurriculumCallback(BaseCallback):
     def __init__(
         self,
         vec_env,
+        eval_env=None,
         window: int = 50,
         promote_threshold: float = 10.0,
         demote_threshold: float = 4.0,
@@ -129,6 +143,7 @@ class CurriculumCallback(BaseCallback):
     ):
         super().__init__(verbose)
         self._vec_env = vec_env
+        self._eval_env = eval_env
         self._window = window
         self._promote = promote_threshold
         self._demote = demote_threshold
@@ -184,6 +199,99 @@ class CurriculumCallback(BaseCallback):
     def _set_difficulty(self, level: int) -> None:
         factor = self.SCHEDULE[level]
         self._vec_env.env_method("set_difficulty", factor)
+        if self._eval_env is not None:
+            self._eval_env.env_method("set_difficulty", factor)
+
+
+class InvalidActionRateCallback(BaseCallback):
+    """Logs invalid-action rate inferred from the conditional action mask."""
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        if infos:
+            invalid = [float(info.get("invalid_action", 0.0)) for info in infos]
+            self.logger.record("rollout/invalid_action_rate", float(np.mean(invalid)))
+        return True
+
+
+class DifficultySweepEvalCallback(BaseCallback):
+    """Deterministic eval at every curriculum difficulty level."""
+
+    def __init__(
+        self,
+        eval_env,
+        eval_freq: int,
+        n_eval_episodes: int,
+        factors: list[float],
+        verbose: int = 1,
+    ):
+        super().__init__(verbose)
+        self.eval_env = eval_env
+        self.eval_freq = eval_freq
+        self.n_eval_episodes = n_eval_episodes
+        self.factors = factors
+
+    def _on_step(self) -> bool:
+        if self.eval_freq <= 0 or self.n_calls % self.eval_freq != 0:
+            return True
+
+        original = float(self.eval_env.get_attr("difficulty")[0])
+        for factor in self.factors:
+            rewards: list[float] = []
+            lengths: list[int] = []
+            scores: list[int] = []
+            invalid_rates: list[float] = []
+            self.eval_env.env_method("set_difficulty", factor)
+
+            obs = self.eval_env.reset()
+            active_rewards = np.zeros(self.eval_env.num_envs, dtype=np.float64)
+            active_lengths = np.zeros(self.eval_env.num_envs, dtype=np.int64)
+            active_invalid = np.zeros(self.eval_env.num_envs, dtype=np.float64)
+            completed = 0
+            while completed < self.n_eval_episodes:
+                masks = np.asarray(self.eval_env.action_masks())
+                actions, _ = self.model.predict(
+                    obs, action_masks=masks, deterministic=True
+                )
+                self.eval_env.step_async(actions)
+                obs, step_rewards, dones, infos = self.eval_env.step_wait()
+                active_rewards += step_rewards
+                active_lengths += 1
+                for i, info in enumerate(infos):
+                    active_invalid[i] += float(info.get("invalid_action", 0.0))
+                    if dones[i]:
+                        rewards.append(float(active_rewards[i]))
+                        lengths.append(int(active_lengths[i]))
+                        scores.append(int(info.get("score", 0)))
+                        invalid_rates.append(
+                            float(active_invalid[i] / max(active_lengths[i], 1))
+                        )
+                        active_rewards[i] = 0.0
+                        active_lengths[i] = 0
+                        active_invalid[i] = 0.0
+                        completed += 1
+                        if completed >= self.n_eval_episodes:
+                            break
+
+            tag = str(factor).replace(".", "_")
+            self.logger.record(f"eval_difficulty_{tag}/mean_reward", float(np.mean(rewards)))
+            self.logger.record(f"eval_difficulty_{tag}/mean_ep_length", float(np.mean(lengths)))
+            self.logger.record(f"eval_difficulty_{tag}/mean_score", float(np.mean(scores)))
+            self.logger.record(
+                f"eval_difficulty_{tag}/invalid_action_rate",
+                float(np.mean(invalid_rates)),
+            )
+            if self.verbose:
+                print(
+                    f"[eval:difficulty={factor:.2f}] "
+                    f"reward={np.mean(rewards):.1f} "
+                    f"len={np.mean(lengths):.1f} "
+                    f"score={np.mean(scores):.1f} "
+                    f"invalid={np.mean(invalid_rates):.3f}"
+                )
+
+        self.eval_env.env_method("set_difficulty", original)
+        return True
 
 
 class TraceCallback(BaseCallback):
@@ -323,6 +431,7 @@ def train(args: argparse.Namespace):
         model = TracedMaskablePPO.load(
             args.resume, env=vec_env, tensorboard_log=LOG_DIR,
             learning_rate=lr_schedule,
+            rollout_buffer_class=ConditionalMaskRolloutBuffer,
             verbose=1,
         )
     else:
@@ -338,6 +447,7 @@ def train(args: argparse.Namespace):
             ent_coef=0.005,     # Decreased from 0.05 to reduce excessive random action noise
             clip_range=0.2,
             max_grad_norm=0.5,
+            rollout_buffer_class=ConditionalMaskRolloutBuffer,
             tensorboard_log=LOG_DIR,
             policy_kwargs={
                 "features_extractor_class": MetroFeatureExtractor,
@@ -349,8 +459,9 @@ def train(args: argparse.Namespace):
 
     callbacks = [
         TraceCallback(interval_s=args.trace_interval),
-        CurriculumCallback(vec_env, window=50, promote_threshold=10.0,
+        CurriculumCallback(vec_env, eval_env=eval_env, window=50, promote_threshold=10.0,
                            demote_threshold=4.0, verbose=1),
+        InvalidActionRateCallback(),
         TracedCheckpointCallback(
             save_freq=max(CHECKPOINT_FREQ // n, 1),
             save_path=CHECKPOINT_DIR,
@@ -363,6 +474,13 @@ def train(args: argparse.Namespace):
             best_model_save_path=CHECKPOINT_DIR,
             log_path=LOG_DIR,
             deterministic=True,
+        ),
+        DifficultySweepEvalCallback(
+            eval_env,
+            n_eval_episodes=EVAL_EPISODES,
+            eval_freq=max(EVAL_FREQ // n, 1),
+            factors=CurriculumCallback.SCHEDULE,
+            verbose=1,
         ),
     ]
 
