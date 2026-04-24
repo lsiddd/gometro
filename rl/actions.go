@@ -3,6 +3,7 @@ package rl
 import (
 	"minimetro-go/components"
 	"minimetro-go/config"
+	"minimetro-go/state"
 	"minimetro-go/systems"
 )
 
@@ -12,7 +13,22 @@ const (
 	NumActionCats   = 14 // action-category dimension of the MultiDiscrete space
 	NumOptions      = 2  // head/tail option dimension
 
-	MaskSize = NumActionCats + MaxLineSlots + MaxStationSlots + NumOptions
+	BaseMaskSize = NumActionCats + MaxLineSlots + MaxStationSlots + NumOptions
+	// Mask layout:
+	//   [base categorical masks]
+	//   [per-action line masks:    NumActionCats * MaxLineSlots]
+	//   [per-action+line station masks: NumActionCats * MaxLineSlots * MaxStationSlots]
+	//   [per-action option masks:  NumActionCats * NumOptions]
+	//
+	// The base section keeps backwards compatibility with consumers that only
+	// understand independent MultiDiscrete masks. The conditional sections are
+	// used by the autoregressive Python policy after it samples the action
+	// category, so later heads only see parameters that are valid for that
+	// category.
+	CondLineOffset    = BaseMaskSize
+	CondStationOffset = CondLineOffset + NumActionCats*MaxLineSlots
+	CondOptionOffset  = CondStationOffset + NumActionCats*MaxLineSlots*MaxStationSlots
+	MaskSize          = CondOptionOffset + NumActionCats*NumOptions
 
 	// Action Categories
 	ActNoOp               = 0
@@ -33,32 +49,23 @@ func BuildActionMaskMulti(env *RLEnv) []bool {
 	gs := env.gs
 	mask := make([]bool, MaskSize)
 
-	// In margin-based masking for MultiDiscrete, we simply allow
-	// any independent dimension slot that could hypothetically be valid.
 	if env.inUpgradeModal {
 		mask[ActChooseUpgrade] = true
-		// Keep irrelevant parameter heads non-empty. The environment ignores
-		// line/station during upgrade selection, but all-masked categoricals add
-		// artificial log-probability/entropy noise in the policy.
-		mask[NumActionCats] = true
-		mask[NumActionCats+MaxLineSlots] = true
 		for i, choice := range env.upgradeChoices {
 			if i < 2 && choice != "" {
-				mask[14+7+50+i] = true // unmask option
+				setOption(mask, ActChooseUpgrade, i)
 			}
 		}
+		setLine(mask, ActChooseUpgrade, 0)
+		setStation(mask, ActChooseUpgrade, 0, 0)
+		projectConditionalMask(mask)
 		return mask
 	}
 
-	// Always allow NoOp
 	mask[ActNoOp] = true
-
-	canAddEndpoint := false
-	canRemoveEndpoint := false
-	canCloseLoop := false
-	canOpenLoop := false
-	canSwapEndpoint := false
-	canInsertIntoLoop := false
+	setLine(mask, ActNoOp, 0)
+	setStation(mask, ActNoOp, 0, 0)
+	setOption(mask, ActNoOp, 0)
 
 	for l := 0; l < gs.AvailableLines && l < len(gs.Lines); l++ {
 		line := gs.Lines[l]
@@ -69,83 +76,248 @@ func BuildActionMaskMulti(env *RLEnv) []bool {
 		isActive := line.Active
 
 		if !isActive {
-			canAddEndpoint = true
+			mask[ActAddEndpoint] = true
+			setLine(mask, ActAddEndpoint, l)
 			continue
 		}
 
 		isLoop := isActive && n > 2 && line.Stations[0] == line.Stations[n-1]
 		if !isLoop {
-			canAddEndpoint = true
+			mask[ActAddEndpoint] = true
+			setLine(mask, ActAddEndpoint, l)
 		}
 		if n >= 3 && !isLoop {
-			canRemoveEndpoint = true
+			mask[ActRemoveEndpoint] = true
+			setLine(mask, ActRemoveEndpoint, l)
 		}
 		if n >= 3 && !isLoop {
-			canCloseLoop = true
+			last := line.Stations[n-1]
+			first := line.Stations[0]
+			if !systems.CheckRiverCrossing(gs, last, first) || gs.Bridges > 0 {
+				mask[ActCloseLoop] = true
+				setLine(mask, ActCloseLoop, l)
+			}
 		}
 		if isLoop {
-			canOpenLoop = true
+			mask[ActOpenLoop] = true
+			setLine(mask, ActOpenLoop, l)
 		}
 		if n >= 2 && !isLoop {
-			canSwapEndpoint = true
+			mask[ActSwapEndpoint] = true
+			setLine(mask, ActSwapEndpoint, l)
 		}
 		if isLoop && n >= 4 {
-			canInsertIntoLoop = true
+			mask[ActInsertIntoLoop] = true
+			setLine(mask, ActInsertIntoLoop, l)
 		}
 	}
 
-	if canAddEndpoint {
-		mask[ActAddEndpoint] = true
-	}
-	if canRemoveEndpoint {
-		mask[ActRemoveEndpoint] = true
-	}
-	if canCloseLoop {
-		mask[ActCloseLoop] = true
-	}
-	if canOpenLoop {
-		mask[ActOpenLoop] = true
-	}
-	if canSwapEndpoint {
-		mask[ActSwapEndpoint] = true
-	}
-	if canInsertIntoLoop {
-		mask[ActInsertIntoLoop] = true
+	for l := 0; l < gs.AvailableLines && l < len(gs.Lines); l++ {
+		line := gs.Lines[l]
+		if line.MarkedForDeletion {
+			continue
+		}
+		setStation(mask, ActRemoveEndpoint, l, 0)
+		for s := 0; s < len(gs.Stations) && s < MaxStationSlots; s++ {
+			st := gs.Stations[s]
+			if !line.Active {
+				setStation(mask, ActAddEndpoint, l, s)
+				continue
+			}
+			n := len(line.Stations)
+			isLoop := n > 2 && line.Stations[0] == line.Stations[n-1]
+			if !isLoop && !lineContainsStation(line, st) {
+				setStation(mask, ActAddEndpoint, l, s)
+			}
+			if n >= 2 && !isLoop && !lineContainsStation(line, st) {
+				setStation(mask, ActSwapEndpoint, l, s)
+			}
+			if isLoop && n >= 4 && !lineContainsStation(line, st) && canInsertStationIntoLoop(gs, line, st) {
+				setStation(mask, ActInsertIntoLoop, l, s)
+			}
+		}
 	}
 
-	if gs.AvailableTrains > 0 {
+	for s := 0; s < len(gs.Stations) && s < MaxStationSlots; s++ {
+		st := gs.Stations[s]
+		if !st.IsInterchange {
+			setStation(mask, ActUpgradeInterchange, 0, s)
+		}
+	}
+
+	if gs.AvailableTrains > 0 && firstMatchingLine(gs, 0, canDeployTrainOnLine) != nil {
 		mask[ActDeployTrain] = true
+		for l := 0; l < gs.AvailableLines && l < len(gs.Lines); l++ {
+			if canDeployTrainOnLine(gs.Lines[l]) {
+				setLine(mask, ActDeployTrain, l)
+			}
+		}
 	}
-	if gs.Carriages > 0 {
+	if gs.Carriages > 0 && firstMatchingLine(gs, 0, canAddCarriageToLine) != nil {
 		mask[ActAddCarriage] = true
+		for l := 0; l < gs.AvailableLines && l < len(gs.Lines); l++ {
+			if canAddCarriageToLine(gs.Lines[l]) {
+				setLine(mask, ActAddCarriage, l)
+			}
+		}
 	}
-	if gs.Interchanges > 0 {
+	if gs.Interchanges > 0 && firstMatchingStation(gs, 0, func(st *components.Station) bool {
+		return !st.IsInterchange
+	}) != nil {
 		mask[ActUpgradeInterchange] = true
 	}
 
-	// Mask Lines
-	nLines := gs.AvailableLines
-	if nLines > len(gs.Lines) {
-		nLines = len(gs.Lines)
-	}
 	for l := 0; l < MaxLineSlots; l++ {
-		if l < nLines {
-			mask[14+l] = true
-		}
+		setStation(mask, ActCloseLoop, l, 0)
+		setStation(mask, ActOpenLoop, l, 0)
+		setStation(mask, ActDeployTrain, l, 0)
+		setStation(mask, ActAddCarriage, l, 0)
 	}
 
-	// Mask Stations
-	for s := 0; s < MaxStationSlots; s++ {
-		if s < len(gs.Stations) {
-			mask[14+7+s] = true
-		}
+	setLine(mask, ActUpgradeInterchange, 0)
+
+	for _, act := range []int{ActAddEndpoint, ActRemoveEndpoint, ActSwapEndpoint} {
+		setOption(mask, act, 0)
+		setOption(mask, act, 1)
+	}
+	for _, act := range []int{ActCloseLoop, ActOpenLoop, ActInsertIntoLoop, ActDeployTrain, ActAddCarriage, ActUpgradeInterchange} {
+		setOption(mask, act, 0)
 	}
 
-	// Mask options (Head/Tail)
-	mask[14+7+50+0] = true
-	mask[14+7+50+1] = true
-
+	clearUnavailableConditionalActions(mask)
+	projectConditionalMask(mask)
 	return mask
+}
+
+func setLine(mask []bool, act, line int) {
+	if act >= 0 && act < NumActionCats && line >= 0 && line < MaxLineSlots {
+		mask[CondLineOffset+act*MaxLineSlots+line] = true
+	}
+}
+
+func setStation(mask []bool, act, line, station int) {
+	if act >= 0 && act < NumActionCats && line >= 0 && line < MaxLineSlots && station >= 0 && station < MaxStationSlots {
+		mask[CondStationOffset+((act*MaxLineSlots+line)*MaxStationSlots)+station] = true
+	}
+}
+
+func setOption(mask []bool, act, option int) {
+	if act >= 0 && act < NumActionCats && option >= 0 && option < NumOptions {
+		mask[CondOptionOffset+act*NumOptions+option] = true
+	}
+}
+
+func clearUnavailableConditionalActions(mask []bool) {
+	for act := 0; act < NumActionCats; act++ {
+		if !mask[act] {
+			for l := 0; l < MaxLineSlots; l++ {
+				mask[CondLineOffset+act*MaxLineSlots+l] = false
+			}
+			for l := 0; l < MaxLineSlots; l++ {
+				for s := 0; s < MaxStationSlots; s++ {
+					mask[CondStationOffset+((act*MaxLineSlots+l)*MaxStationSlots)+s] = false
+				}
+			}
+			for o := 0; o < NumOptions; o++ {
+				mask[CondOptionOffset+act*NumOptions+o] = false
+			}
+		}
+	}
+}
+
+func projectConditionalMask(mask []bool) {
+	for act := 0; act < NumActionCats; act++ {
+		for l := 0; l < MaxLineSlots; l++ {
+			if mask[CondLineOffset+act*MaxLineSlots+l] {
+				mask[NumActionCats+l] = true
+			}
+		}
+		for l := 0; l < MaxLineSlots; l++ {
+			for s := 0; s < MaxStationSlots; s++ {
+				if mask[CondStationOffset+((act*MaxLineSlots+l)*MaxStationSlots)+s] {
+					mask[NumActionCats+MaxLineSlots+s] = true
+				}
+			}
+		}
+		for o := 0; o < NumOptions; o++ {
+			if mask[CondOptionOffset+act*NumOptions+o] {
+				mask[NumActionCats+MaxLineSlots+MaxStationSlots+o] = true
+			}
+		}
+	}
+}
+
+func lineContainsStation(line *components.Line, st *components.Station) bool {
+	for _, cur := range line.Stations {
+		if cur == st {
+			return true
+		}
+	}
+	return false
+}
+
+func canInsertStationIntoLoop(gs *state.GameState, line *components.Line, st *components.Station) bool {
+	n := len(line.Stations)
+	pos := n / 2
+	if pos <= 0 {
+		pos = 1
+	}
+	prev := line.Stations[pos-1]
+	next := line.Stations[pos]
+	cost := 0
+	if systems.CheckRiverCrossing(gs, prev, st) {
+		cost++
+	}
+	if systems.CheckRiverCrossing(gs, st, next) {
+		cost++
+	}
+	if systems.CheckRiverCrossing(gs, prev, next) {
+		cost--
+	}
+	if cost < 0 {
+		cost = 0
+	}
+	return gs.Bridges >= cost
+}
+
+func firstMatchingLine(gs *state.GameState, preferred int, valid func(*components.Line) bool) *components.Line {
+	if preferred >= 0 && preferred < gs.AvailableLines && preferred < len(gs.Lines) && valid(gs.Lines[preferred]) {
+		return gs.Lines[preferred]
+	}
+	for i := 0; i < gs.AvailableLines && i < len(gs.Lines); i++ {
+		if i != preferred && valid(gs.Lines[i]) {
+			return gs.Lines[i]
+		}
+	}
+	return nil
+}
+
+func firstMatchingStation(gs *state.GameState, preferred int, valid func(*components.Station) bool) *components.Station {
+	if preferred >= 0 && preferred < len(gs.Stations) && valid(gs.Stations[preferred]) {
+		return gs.Stations[preferred]
+	}
+	for i, st := range gs.Stations {
+		if i != preferred && valid(st) {
+			return st
+		}
+	}
+	return nil
+}
+
+func canDeployTrainOnLine(line *components.Line) bool {
+	return line != nil && line.Active && !line.MarkedForDeletion && len(line.Trains) < config.MaxTrainsPerLine
+}
+
+func canAddCarriageToLine(line *components.Line) bool {
+	if line == nil || !line.Active || line.MarkedForDeletion {
+		return false
+	}
+	for _, t := range line.Trains {
+		if t.CarriageCount < config.MaxCarriagesPerTrain {
+			return true
+		}
+	}
+	return false
 }
 
 func ApplyRLAction(env *RLEnv, action []int) bool {
@@ -160,19 +332,19 @@ func ApplyRLAction(env *RLEnv, action []int) bool {
 	gs := env.gs
 
 	// Ensure indices are in bounds
-	if lIdx >= len(gs.Lines) && actCat != ActNoOp && actCat != ActUpgradeInterchange && actCat != ActChooseUpgrade {
+	if (lIdx < 0 || lIdx >= len(gs.Lines)) && actCat != ActNoOp && actCat != ActUpgradeInterchange && actCat != ActChooseUpgrade {
 		return false
 	}
-	if sIdx >= len(gs.Stations) && actCat != ActNoOp && actCat != ActCloseLoop && actCat != ActOpenLoop && actCat != ActDeployTrain && actCat != ActAddCarriage {
+	if (sIdx < 0 || sIdx >= len(gs.Stations)) && actCat != ActNoOp && actCat != ActCloseLoop && actCat != ActOpenLoop && actCat != ActDeployTrain && actCat != ActAddCarriage {
 		return false
 	}
 
 	var line *components.Line
-	if lIdx < len(gs.Lines) {
+	if lIdx >= 0 && lIdx < len(gs.Lines) {
 		line = gs.Lines[lIdx]
 	}
 	var st *components.Station
-	if sIdx < len(gs.Stations) {
+	if sIdx >= 0 && sIdx < len(gs.Stations) {
 		st = gs.Stations[sIdx]
 	}
 
@@ -329,10 +501,11 @@ func ApplyRLAction(env *RLEnv, action []int) bool {
 		})
 
 	case ActDeployTrain:
-		if line == nil || !line.Active || line.MarkedForDeletion {
+		line = firstMatchingLine(gs, lIdx, canDeployTrainOnLine)
+		if line == nil {
 			return false
 		}
-		if gs.AvailableTrains <= 0 || len(line.Trains) >= config.MaxTrainsPerLine {
+		if gs.AvailableTrains <= 0 {
 			return false
 		}
 		gs.AvailableTrains--
@@ -343,10 +516,11 @@ func ApplyRLAction(env *RLEnv, action []int) bool {
 		return true
 
 	case ActAddCarriage:
-		if line == nil || !line.Active || line.MarkedForDeletion {
+		if gs.Carriages <= 0 {
 			return false
 		}
-		if gs.Carriages <= 0 {
+		line = firstMatchingLine(gs, lIdx, canAddCarriageToLine)
+		if line == nil {
 			return false
 		}
 		var best *components.Train
@@ -370,6 +544,9 @@ func ApplyRLAction(env *RLEnv, action []int) bool {
 		return true
 
 	case ActUpgradeInterchange:
+		st = firstMatchingStation(gs, sIdx, func(st *components.Station) bool {
+			return !st.IsInterchange
+		})
 		if st == nil {
 			return false
 		}
