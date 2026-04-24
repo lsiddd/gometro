@@ -78,11 +78,11 @@ The Go side never imports Python. The Python side never links the game engine. C
 ## Requirements
 
 **Game only:**
-- Go 1.21+
+- Go 1.26.1+
 - Ebitengine system libs (Linux): `libgl1-mesa-dev xorg-dev`
 
 **RL training:**
-- Python 3.11+ with [uv](https://github.com/astral-sh/uv)
+- Python 3.12+ with [uv](https://github.com/astral-sh/uv)
 - The Go binary in `PATH` (training spawns headless subprocesses)
 
 ---
@@ -105,6 +105,8 @@ just build        # compile Go binary
 just run          # run game interactively
 just train        # start RL training (spawns Go workers + Python PPO)
 just infer        # start inference server
+just resume       # resume RL training from the latest checkpoint
+just proto        # regenerate Go and Python protobuf bindings
 ```
 
 ---
@@ -128,10 +130,10 @@ just infer        # start inference server
 just train
 
 # Resume from latest checkpoint
-just train --resume
+just resume
 
 # Monitor with TensorBoard
-tensorboard --logdir runs/
+just tensorboard
 ```
 
 Training configuration lives in `python/train.py`. Key hyperparameters:

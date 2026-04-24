@@ -1,6 +1,5 @@
 # Compiled binaries
 gometro
-minimetro-go
 minimetro-go-bin
 *.exe
 *.out

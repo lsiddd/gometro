@@ -13,6 +13,26 @@ build:
 	go build -o minimetro .
 	go build -tags headless -o {{binary}} ./cmd/rl_server/
 
+# run the playable game
+run:
+	go run .
+
+# start a gRPC inference server for live play
+infer model="checkpoints/best_model.zip" port="9000":
+	cd {{python_dir}} && uv run python infer.py --model "{{model}}" --port {{port}}
+
+# regenerate protobuf bindings in-place
+proto:
+	protoc \
+		--go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		rl/proto/minimetro.proto
+	cd {{python_dir}} && uv run python -m grpc_tools.protoc \
+		-I .. \
+		--python_out=. \
+		--grpc_python_out=. \
+		../rl/proto/minimetro.proto
+
 # build, start TensorBoard, then train from scratch
 train: build _kill-servers
 	#!/usr/bin/env bash
