@@ -227,6 +227,17 @@ func (s *GRPCService) RunVectorEpisode(stream pb.RLEnv_RunVectorEpisodeServer) e
 	var sendAccum time.Duration
 	var simMax time.Duration
 	var sendMax time.Duration
+	allObs := make([]float32, n*ObsDim)
+	allMask := make([]bool, n*MaskSize)
+	reward := make([]float64, n)
+	done := make([]bool, n)
+	termObs := make([]float32, n*ObsDim)
+	score := make([]int32, n)
+	pax := make([]int32, n)
+	week := make([]int32, n)
+	stations := make([]int32, n)
+	gameOver := make([]bool, n)
+	inModal := make([]bool, n)
 
 	for {
 		req, err := stream.Recv()
@@ -245,21 +256,13 @@ func (s *GRPCService) RunVectorEpisode(stream pb.RLEnv_RunVectorEpisodeServer) e
 		}
 		stepCount++
 
-		allObs := make([]float32, n*ObsDim)
-		allMask := make([]bool, n*MaskSize)
-		reward := make([]float64, n)
-		done := make([]bool, n)
-		var termObs []float32
+		clear(done)
+		clear(gameOver)
+		clear(inModal)
+		terminalObsOut := []float32(nil)
 		var termMu sync.Mutex
 		var panicMu sync.Mutex
 		var panicErr error
-
-		score := make([]int32, n)
-		pax := make([]int32, n)
-		week := make([]int32, n)
-		stations := make([]int32, n)
-		gameOver := make([]bool, n)
-		inModal := make([]bool, n)
 
 		var wg sync.WaitGroup
 		wg.Add(n)
@@ -280,8 +283,14 @@ func (s *GRPCService) RunVectorEpisode(stream pb.RLEnv_RunVectorEpisodeServer) e
 				}()
 				env := s.vecEnvs[idx]
 
-				actSlice := int32SliceToInt(actions[idx*4 : (idx+1)*4])
-				obs, r, d, mask := env.Step(actSlice)
+				offset := idx * 4
+				act := [4]int{
+					int(actions[offset]),
+					int(actions[offset+1]),
+					int(actions[offset+2]),
+					int(actions[offset+3]),
+				}
+				obs, r, d, mask := env.Step(act[:])
 
 				reward[idx] = r
 				done[idx] = d
@@ -294,8 +303,9 @@ func (s *GRPCService) RunVectorEpisode(stream pb.RLEnv_RunVectorEpisodeServer) e
 
 				if d {
 					termMu.Lock()
-					if termObs == nil {
-						termObs = make([]float32, n*ObsDim)
+					if terminalObsOut == nil {
+						clear(termObs)
+						terminalObsOut = termObs
 					}
 					copy(termObs[idx*ObsDim:(idx+1)*ObsDim], obs)
 					termMu.Unlock()
@@ -327,7 +337,7 @@ func (s *GRPCService) RunVectorEpisode(stream pb.RLEnv_RunVectorEpisodeServer) e
 			Mask:                allMask,
 			Reward:              reward,
 			Done:                done,
-			TerminalObs:         termObs,
+			TerminalObs:         terminalObsOut,
 			Score:               score,
 			PassengersDelivered: pax,
 			Week:                week,
