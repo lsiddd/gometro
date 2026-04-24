@@ -19,7 +19,7 @@ import time
 import numpy as np
 import pytest
 
-from constants import OBS_DIM, ACTION_DIMS
+from constants import OBS_DIM, ACTION_DIMS, MASK_SIZE
 from env import MiniMetroEnv
 from rl.proto import minimetro_pb2 as pb
 
@@ -86,7 +86,7 @@ def test_reset_obs_in_unit_range(env):
 def test_reset_mask_length(env):
     env.reset()
     mask = env.action_masks()
-    expected_len = sum(ACTION_DIMS)
+    expected_len = MASK_SIZE
     assert len(mask) == expected_len, (
         f"mask length: want {expected_len}, got {len(mask)}"
     )
