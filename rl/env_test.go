@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"minimetro-go/config"
 	pb "minimetro-go/rl/proto"
 )
 
@@ -45,5 +46,30 @@ func TestVectorAutoResetUsesCurrentSpawnRateFactor(t *testing.T) {
 	}
 	if len(mask) != MaskSize {
 		t.Fatalf("mask length: want %d, got %d", MaskSize, len(mask))
+	}
+}
+
+func TestComputeRewardKeepsPerStepScaleBalanced(t *testing.T) {
+	env := NewRLEnv()
+	env.Reset("london", 1.0)
+
+	env.prevDelivered = 0
+	env.prevWeek = 1
+	env.gs.PassengersDelivered = 2
+	env.gs.Week = 2
+	env.gs.Stations[0].OvercrowdProgress = 0.5 * float64(config.OvercrowdTime)
+	env.gs.Stations[1].OvercrowdProgress = 0.9 * float64(config.OvercrowdTime)
+
+	reward := env.computeReward(false)
+
+	want := (2.0 * rewardPerPassenger) -
+		((0.5 + 0.9) * rewardOvercrowdCoeff) -
+		rewardDangerPenalty +
+		rewardWeekBonus
+	if reward != want {
+		t.Fatalf("reward: want %.3f, got %.3f", want, reward)
+	}
+	if env.lastReward.Danger != rewardDangerPenalty {
+		t.Fatalf("danger penalty: want %.3f, got %.3f", rewardDangerPenalty, env.lastReward.Danger)
 	}
 }

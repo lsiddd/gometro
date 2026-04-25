@@ -135,7 +135,6 @@ class CurriculumCallback(BaseCallback):
     def __init__(
         self,
         vec_env,
-        eval_env=None,
         window: int = 50,
         promote_threshold: float = 10.0,
         demote_threshold: float = 4.0,
@@ -143,7 +142,6 @@ class CurriculumCallback(BaseCallback):
     ):
         super().__init__(verbose)
         self._vec_env = vec_env
-        self._eval_env = eval_env
         self._window = window
         self._promote = promote_threshold
         self._demote = demote_threshold
@@ -199,8 +197,6 @@ class CurriculumCallback(BaseCallback):
     def _set_difficulty(self, level: int) -> None:
         factor = self.SCHEDULE[level]
         self._vec_env.env_method("set_difficulty", factor)
-        if self._eval_env is not None:
-            self._eval_env.env_method("set_difficulty", factor)
 
 
 class InvalidActionRateCallback(BaseCallback):
@@ -417,6 +413,9 @@ def train(args: argparse.Namespace):
     )
     vec_env = VecMonitor(vec_env)
 
+    # Keep the primary eval callback on a fixed benchmark. If curriculum also
+    # mutates this env, `eval/mean_reward` becomes a moving target and can
+    # trend downward even while the policy improves.
     eval_env = MiniMetroVecEnv(
         n_envs=2,
         city=args.city,
@@ -459,7 +458,7 @@ def train(args: argparse.Namespace):
 
     callbacks = [
         TraceCallback(interval_s=args.trace_interval),
-        CurriculumCallback(vec_env, eval_env=eval_env, window=50, promote_threshold=10.0,
+        CurriculumCallback(vec_env, window=50, promote_threshold=10.0,
                            demote_threshold=4.0, verbose=1),
         InvalidActionRateCallback(),
         TracedCheckpointCallback(

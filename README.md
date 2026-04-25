@@ -314,12 +314,12 @@ Reward shaping coefficients (in `rl/env.go`):
 
 | Signal | Value | Rationale |
 |---|---|---|
-| Per passenger delivered | +2.0 | Dense signal without dominating survival |
-| Overcrowd pressure | −1.0 × fraction | Continuous cost for congestion |
-| Danger zone (>80% full) | −5.0 per station | Strong near-terminal penalty |
-| Week survival bonus | +50.0 | Explicit milestone reward |
-| Terminal penalty | −250.0 | Makes early death clearly worse than congestion |
-| Invalid action | −10.0 | Discourages exploring structurally illegal moves |
+| Per passenger delivered | +5.0 | Dense throughput signal keeps credit assignment local |
+| Overcrowd pressure | −0.02 × fraction | Mild congestion cost that does not swamp step rewards |
+| Danger zone (>80% full) | −0.1 per station | Early warning while terminal loss remains the dominant punishment |
+| Week survival bonus | +20.0 | Explicit milestone reward once per week |
+| Terminal penalty | −100.0 | Clear failure signal without crushing the return scale |
+| Invalid action | −1.0 | Small penalty because the action mask already removes most invalid moves |
 
 ---
 

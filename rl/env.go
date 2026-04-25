@@ -146,14 +146,18 @@ func (e *RLEnv) runFrames() (gameOver bool) {
 
 // Reward shaping coefficients. All tunable values are centralised here so
 // experiments require no recompile of unrelated code — change a constant, run.
+//
+// The agent acts every ~300 ms, so common per-step penalties must stay in the
+// same rough O(1) range as passenger-delivery rewards. Larger values quickly
+// swamp the weekly-survival signal and destabilise PPO.
 const (
-	rewardPerPassenger    = 2.0   // dense delivery signal without dominating survival incentives
-	rewardOvercrowdCoeff  = 1.0   // continuous pressure to reduce station overload risk
+	rewardPerPassenger    = 5.0   // dense delivery signal keeps throughput learning visible every step
+	rewardOvercrowdCoeff  = 0.02  // mild continuous congestion pressure without drowning dense rewards
 	rewardDangerThresh    = 0.80  // overcrowd fraction at which a station is "in danger"
-	rewardDangerPenalty   = 5.0   // per-station penalty when close to terminal overcrowding
-	rewardWeekBonus       = 50.0  // explicit survival milestone bonus
-	rewardTerminalPenalty = 250.0 // makes early death clearly worse than temporary congestion
-	rewardInvalidAction   = 10.0  // invalid combinations should not be a tolerable exploration habit
+	rewardDangerPenalty   = 0.1   // soft warning near terminal overcrowding; terminal loss carries the main penalty
+	rewardWeekBonus       = 20.0  // explicit survival milestone reward once per in-game week
+	rewardTerminalPenalty = 100.0 // clear loss signal without overwhelming credit assignment
+	rewardInvalidAction   = 1.0   // small nudge; the action mask already removes most invalid exploration
 )
 
 // RewardBreakdown stores the components of the most recent transition reward.
