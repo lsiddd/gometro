@@ -13,13 +13,16 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from stable_baselines3.common.vec_env import VecEnv
+from stable_baselines3.common.vec_env import VecEnv, VecEnvWrapper
 from stable_baselines3.common.vec_env.base_vec_env import VecEnvStepReturn
 
 from constants import (
     OBS_DIM,
     ACTION_DIMS,
     MASK_SIZE,
+    GLOBAL_DIM,
+    STATION_DIM,
+    NUM_STATIONS,
     COND_LINE_OFFSET,
     COND_STATION_OFFSET,
     COND_OPTION_OFFSET,
@@ -35,6 +38,9 @@ from rl.proto import minimetro_pb2_grpc as pb_grpc
 _DEFAULT_BINARY = os.path.join(os.path.dirname(__file__), "..", "rl_server")
 _MASK_SIZE = MASK_SIZE
 _STEP_TIMEOUT_S = float(os.environ.get("MINIMETRO_STEP_TIMEOUT", "30"))
+_STATION_OFFSET = GLOBAL_DIM
+_PAX_RATIO_IDX = 3
+_OVERCROWD_IDX = 4
 
 
 def _actions_valid_for_masks(actions: np.ndarray, masks: np.ndarray) -> np.ndarray:
@@ -90,6 +96,7 @@ class MiniMetroVecEnv(VecEnv):
 
         self._mask = np.ones((n_envs, _MASK_SIZE), dtype=bool)
         self.difficulty = 1.0
+        self.complexity = 4
 
         self._channel: grpc.Channel | None = None
         self._stub: pb_grpc.RLEnvStub | None = None
@@ -118,6 +125,11 @@ class MiniMetroVecEnv(VecEnv):
             self._trace(f"set_difficulty factor={self.difficulty:.3f}")
             self._set_server_difficulty(self.difficulty)
             return [None] * self.num_envs
+        if method_name == "set_complexity":
+            self.complexity = int(args[0])
+            self._trace(f"set_complexity level={self.complexity}")
+            self._set_server_complexity(self.complexity)
+            return [None] * self.num_envs
         if method_name == "action_masks":
             return list(self._mask)
         raise NotImplementedError(method_name)
@@ -128,12 +140,17 @@ class MiniMetroVecEnv(VecEnv):
     def get_attr(self, attr_name: str, indices=None) -> list[Any]:
         if attr_name == "difficulty":
             return [self.difficulty] * self.num_envs
+        if attr_name == "complexity":
+            return [self.complexity] * self.num_envs
         return [None] * self.num_envs
 
     def set_attr(self, attr_name: str, value: Any, indices=None) -> None:
         if attr_name == "difficulty":
             self.difficulty = value
             self._set_server_difficulty(self.difficulty)
+        if attr_name == "complexity":
+            self.complexity = int(value)
+            self._set_server_complexity(self.complexity)
 
     def action_masks(self) -> list[np.ndarray]:
         return list(self._mask)
@@ -210,11 +227,27 @@ class MiniMetroVecEnv(VecEnv):
 
         infos = []
         for i in range(self.num_envs):
+            station_slice = obs[
+                i,
+                _STATION_OFFSET:_STATION_OFFSET + NUM_STATIONS * STATION_DIM,
+            ].reshape(NUM_STATIONS, STATION_DIM)
+            valid_station = station_slice[:, 6] > 0
+            queue_pressure = float(station_slice[valid_station, _PAX_RATIO_IDX].sum())
+            overcrowd_pressure = float(
+                np.square(station_slice[valid_station, _OVERCROWD_IDX]).sum()
+            )
+            danger_count = float(
+                np.sum(station_slice[valid_station, _OVERCROWD_IDX] > 0.80)
+            )
             info = {
                 "score": score[i],
                 "passengers_delivered": pax[i],
                 "week": week[i],
                 "stations": stations[i],
+                "action_category": int(actions_for_info[i, 0]),
+                "queue_pressure": queue_pressure,
+                "overcrowd_pressure": overcrowd_pressure,
+                "danger_count": danger_count,
                 "game_over": game_over[i],
                 "in_upgrade_modal": in_modal[i],
                 "valid_action": bool(valid_actions[i]),
@@ -295,6 +328,11 @@ class MiniMetroVecEnv(VecEnv):
             request_serializer=pb.ResetRequest.SerializeToString,
             response_deserializer=pb.Empty.FromString,
         )
+        self._control_set_complexity = self._channel.unary_unary(
+            "/rl.Control/SetComplexity",
+            request_serializer=pb.ResetRequest.SerializeToString,
+            response_deserializer=pb.Empty.FromString,
+        )
 
         info_resp = self._stub.Info(pb.Empty())
         validate_server_constants({
@@ -317,6 +355,16 @@ class MiniMetroVecEnv(VecEnv):
             timeout=5,
         )
         self._trace(f"set_server_difficulty elapsed={time.perf_counter() - t0:.3f}s")
+
+    def _set_server_complexity(self, level: int) -> None:
+        if self._channel is None:
+            return
+        t0 = time.perf_counter()
+        self._control_set_complexity(
+            pb.ResetRequest(spawn_rate_factor=float(level)),
+            timeout=5,
+        )
+        self._trace(f"set_server_complexity elapsed={time.perf_counter() - t0:.3f}s")
 
     def _start_server(self):
         binary = os.path.abspath(self.binary)
@@ -428,3 +476,52 @@ class MiniMetroEnv(gym.Env):
 
     def close(self):
         self._vec.close()
+
+
+class MiniMetroFrameStack(VecEnvWrapper):
+    """Frame stacking wrapper for flat Mini Metro observations.
+
+    SB3's generic VecFrameStack zero-fills earlier frames after reset. Repeating
+    the initial observation keeps the stacked input in-distribution from the
+    first decision of each episode.
+    """
+
+    def __init__(self, venv: VecEnv, n_stack: int):
+        if n_stack < 1:
+            raise ValueError("n_stack must be >= 1")
+        if len(venv.observation_space.shape) != 1:
+            raise ValueError("MiniMetroFrameStack expects flat Box observations")
+        self.n_stack = n_stack
+        self.obs_dim = int(venv.observation_space.shape[0])
+        low = np.tile(venv.observation_space.low, n_stack)
+        high = np.tile(venv.observation_space.high, n_stack)
+        observation_space = spaces.Box(low=low, high=high, dtype=venv.observation_space.dtype)
+        super().__init__(venv, observation_space=observation_space)
+        self._stacked_obs = np.zeros(
+            (self.num_envs, self.obs_dim * self.n_stack),
+            dtype=venv.observation_space.dtype,
+        )
+
+    def reset(self) -> np.ndarray:
+        obs = self.venv.reset()
+        self._stacked_obs = np.tile(obs, (1, self.n_stack))
+        return self._stacked_obs.copy()
+
+    def step_wait(self) -> VecEnvStepReturn:
+        obs, rewards, dones, infos = self.venv.step_wait()
+        prev_stacked = self._stacked_obs.copy()
+        for i in range(self.num_envs):
+            if dones[i]:
+                terminal_obs = infos[i].get("terminal_observation")
+                if terminal_obs is not None:
+                    infos[i]["terminal_observation"] = np.concatenate(
+                        [prev_stacked[i, self.obs_dim:], terminal_obs.astype(prev_stacked.dtype)]
+                    )
+                self._stacked_obs[i] = np.tile(obs[i], self.n_stack)
+            else:
+                self._stacked_obs[i, :-self.obs_dim] = self._stacked_obs[i, self.obs_dim:]
+                self._stacked_obs[i, -self.obs_dim:] = obs[i]
+        return self._stacked_obs.copy(), rewards, dones, infos
+
+    def action_masks(self) -> list[np.ndarray]:
+        return self.venv.action_masks()

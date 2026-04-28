@@ -24,7 +24,11 @@ func (g *Game) updateSpawning(gs *state.GameState, screenWidth, screenHeight, no
 		gs.LastSpawnTime = nowMs
 	}
 
-	if gs.SpawnStationsEnabled && nowMs-gs.LastStationSpawnTime > currentStationSpawnRate/gs.Speed {
+	canSpawnStation := gs.SpawnStationsEnabled
+	if gs.StationSpawnLimit > 0 && len(gs.Stations) >= gs.StationSpawnLimit {
+		canSpawnStation = false
+	}
+	if canSpawnStation && nowMs-gs.LastStationSpawnTime > currentStationSpawnRate/gs.Speed {
 		g.SpawnStation(gs, screenWidth, screenHeight)
 		gs.LastStationSpawnTime = nowMs
 	}

@@ -12,17 +12,18 @@ import (
 const (
 	GlobalDim  = 15 // global scalar features
 	StationDim = 16 // per-station features (9 base + 7 passenger-demand dims)
-	LineDim    = 7  // per-line features
+	LineDim    = 14 // per-line features
 )
 
 // ObsDim is the total length of the observation vector returned by BuildObservation.
 //
 //	Global:   GlobalDim                        = 15
 //	Stations: MaxStationSlots × StationDim     = 800
-//	Lines:    MaxLineSlots    × LineDim        = 49
-//	Topology: MaxLineSlots    × MaxStationSlots = 350
-//	Total:    1214
-const ObsDim = GlobalDim + MaxStationSlots*StationDim + MaxLineSlots*LineDim + MaxLineSlots*MaxStationSlots
+//	Lines:      MaxLineSlots × LineDim          = 98
+//	Membership: MaxLineSlots × MaxStationSlots  = 350
+//	Role:       MaxLineSlots × MaxStationSlots  = 350
+//	Total:      1613
+const ObsDim = GlobalDim + MaxStationSlots*StationDim + MaxLineSlots*LineDim + 2*MaxLineSlots*MaxStationSlots
 
 // numStationTypes is the number of distinct station/passenger types.
 const numStationTypes = 7
@@ -223,9 +224,15 @@ func BuildObservation(env *RLEnv) []float32 {
 	}
 	i += MaxStationSlots * StationDim
 
-	// ── Line features (7 × 7) ────────────────────────────────────────────────
-	// Compile-time guard: LineDim must cover indices 0..6.
-	_ = [LineDim - 7]struct{}{}
+	// ── Line features (7 × 14) ───────────────────────────────────────────────
+	// Per-line layout (base+0 .. base+13):
+	//   0: active          1: available       2: station count
+	//   3: train count     4: load ratio      5: is loop
+	//   6: arc length      7: avg progress    8: moving train ratio
+	//   9: forward ratio  10: avg wait       11: avg speed
+	//  12: avg carriages  13: avg station index
+	// Compile-time guard: LineDim must cover indices 0..13.
+	_ = [LineDim - 14]struct{}{}
 	for l := 0; l < MaxLineSlots; l++ {
 		base := i + l*LineDim
 		if l >= len(gs.Lines) {
@@ -244,17 +251,35 @@ func BuildObservation(env *RLEnv) []float32 {
 			arcLen = math.Sqrt(arcLen)
 		}
 
+		nSt := len(stations)
 		totalPax, totalCap := 0, 0
+		var totalProgress, moving, forward, wait, speed, carriages, stationIndex float64
 		for _, t := range line.Trains {
 			totalPax += len(t.Passengers)
 			totalCap += t.TotalCapacity()
+			if t.PathLength > 0 {
+				totalProgress += t.Progress / t.PathLength
+			}
+			if t.State == components.TrainMoving {
+				moving++
+			}
+			if t.Direction >= 0 {
+				forward++
+			}
+			wait += t.WaitTimer / 1000.0
+			if t.MaxSpeed > 0 {
+				speed += t.Speed / t.MaxSpeed
+			}
+			carriages += float64(t.CarriageCount) / float64(config.MaxCarriagesPerTrain)
+			if nSt > 1 {
+				stationIndex += float64(t.CurrentStationIndex) / float64(nSt-1)
+			}
 		}
 		loadRatio := float32(0)
 		if totalCap > 0 {
 			loadRatio = clamp01(float32(totalPax) / float32(totalCap))
 		}
 
-		nSt := len(stations)
 		isLoop := line.Active && nSt > 2 && stations[0] == stations[nSt-1]
 
 		if line.Active {
@@ -270,10 +295,20 @@ func BuildObservation(env *RLEnv) []float32 {
 			obs[base+5] = 1
 		}
 		obs[base+6] = clamp01(float32(arcLen) / 1000.0)
+		if len(line.Trains) > 0 {
+			denom := float32(len(line.Trains))
+			obs[base+7] = clamp01(float32(totalProgress) / denom)
+			obs[base+8] = clamp01(float32(moving) / denom)
+			obs[base+9] = clamp01(float32(forward) / denom)
+			obs[base+10] = clamp01(float32(wait) / denom)
+			obs[base+11] = clamp01(float32(speed) / denom)
+			obs[base+12] = clamp01(float32(carriages) / denom)
+			obs[base+13] = clamp01(float32(stationIndex) / denom)
+		}
 	}
 	i += MaxLineSlots * LineDim
 
-	// ── Topology (7 × 50) ────────────────────────────────────────────────────
+	// ── Topology membership (7 × 50) ──────────────────────────────────────────
 	for l := 0; l < MaxLineSlots; l++ {
 		var stations []*components.Station
 		if l < len(gs.Lines) && gs.Lines[l].Active {
@@ -286,8 +321,36 @@ func BuildObservation(env *RLEnv) []float32 {
 				st = gs.Stations[s]
 			}
 
-			val := float32(0.0)
+			val := float32(0)
+			if st != nil && len(stations) > 0 {
+				for _, ls := range stations {
+					if ls == st {
+						val = 1
+						break
+					}
+				}
+			}
 
+			obs[i] = val
+			i++
+		}
+	}
+
+	// ── Topology role (7 × 50) ────────────────────────────────────────────────
+	// 0: absent, 0.25: middle, 0.5: head, 0.75: loop point, 1.0: tail.
+	for l := 0; l < MaxLineSlots; l++ {
+		var stations []*components.Station
+		if l < len(gs.Lines) && gs.Lines[l].Active {
+			stations = gs.Lines[l].Stations
+		}
+
+		for s := 0; s < MaxStationSlots; s++ {
+			var st *components.Station
+			if s < len(gs.Stations) {
+				st = gs.Stations[s]
+			}
+
+			val := float32(0)
 			if st != nil && len(stations) > 0 {
 				isHead, isTail, isMiddle := false, false, false
 				for idx, ls := range stations {
@@ -302,13 +365,13 @@ func BuildObservation(env *RLEnv) []float32 {
 					}
 				}
 				if isHead && isTail {
-					val = 0.75 // loop point
+					val = 0.75
 				} else if isHead {
-					val = 0.5 // head
+					val = 0.5
 				} else if isTail {
-					val = 1.0 // tail
+					val = 1.0
 				} else if isMiddle {
-					val = 0.25 // middle
+					val = 0.25
 				}
 			}
 
@@ -323,4 +386,3 @@ func BuildObservation(env *RLEnv) []float32 {
 
 	return obs
 }
-

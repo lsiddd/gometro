@@ -22,11 +22,12 @@ type GRPCService struct {
 	vecEnvs                []*RLEnv // Vectorized execution batch
 	mu                     sync.RWMutex
 	currentSpawnRateFactor float64
+	currentComplexityLevel int
 	lastDifficultyLog      time.Time
 }
 
 func NewGRPCService() *GRPCService {
-	return &GRPCService{env: NewRLEnv(), currentSpawnRateFactor: 1.0}
+	return &GRPCService{env: NewRLEnv(), currentSpawnRateFactor: 1.0, currentComplexityLevel: 4}
 }
 
 func (s *GRPCService) setSpawnRateFactor(sf float64) {
@@ -55,6 +56,30 @@ func (s *GRPCService) spawnRateFactor() float64 {
 	return sf
 }
 
+func (s *GRPCService) setComplexityLevel(level int) {
+	if level < 0 {
+		level = 0
+	}
+	if level > 4 {
+		level = 4
+	}
+	s.mu.Lock()
+	s.currentComplexityLevel = level
+	s.env.SetComplexity(level)
+	for _, env := range s.vecEnvs {
+		env.SetComplexity(level)
+	}
+	s.mu.Unlock()
+	log.Printf("[rl] complexity set level=%d", level)
+}
+
+func (s *GRPCService) complexityLevel() int {
+	s.mu.RLock()
+	level := s.currentComplexityLevel
+	s.mu.RUnlock()
+	return level
+}
+
 // RegisterControlService exposes a tiny manually-registered control endpoint.
 // It avoids regenerating the protobuf stubs just to let the Python curriculum
 // update the spawn-rate factor used by native vector auto-reset.
@@ -66,6 +91,10 @@ func RegisterControlService(reg grpc.ServiceRegistrar, svc *GRPCService) {
 			{
 				MethodName: "SetDifficulty",
 				Handler:    controlSetDifficultyHandler,
+			},
+			{
+				MethodName: "SetComplexity",
+				Handler:    controlSetComplexityHandler,
 			},
 		},
 		Streams:  []grpc.StreamDesc{},
@@ -100,6 +129,31 @@ func controlSetDifficultyHandler(
 	return interceptor(ctx, in, info, handler)
 }
 
+func controlSetComplexityHandler(
+	srv any,
+	ctx context.Context,
+	dec func(any) error,
+	interceptor grpc.UnaryServerInterceptor,
+) (any, error) {
+	in := new(pb.ResetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		srv.(*GRPCService).setComplexityLevel(int(in.SpawnRateFactor))
+		return &pb.Empty{}, nil
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/rl.Control/SetComplexity",
+	}
+	handler := func(ctx context.Context, req any) (any, error) {
+		srv.(*GRPCService).setComplexityLevel(int(req.(*pb.ResetRequest).SpawnRateFactor))
+		return &pb.Empty{}, nil
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ── Info ─────────────────────────────────────────────────────────────────────
 
 func (s *GRPCService) Info(_ context.Context, _ *pb.Empty) (*pb.InfoResponse, error) {
@@ -126,7 +180,8 @@ func (s *GRPCService) Reset(_ context.Context, req *pb.ResetRequest) (*pb.ResetR
 		sf = 1.0
 	}
 	s.setSpawnRateFactor(sf)
-	log.Printf("[rl] Reset city=%s spawn_rate_factor=%.3f", city, sf)
+	s.env.SetComplexity(s.complexityLevel())
+	log.Printf("[rl] Reset city=%s spawn_rate_factor=%.3f complexity=%d", city, sf, s.complexityLevel())
 	obs, mask := s.env.Reset(city, sf)
 	return &pb.ResetResponse{Obs: obs, Mask: boolSlice(mask)}, nil
 }
@@ -180,7 +235,8 @@ func (s *GRPCService) ResetVector(_ context.Context, req *pb.VectorResetRequest)
 		sf = 1.0
 	}
 	s.setSpawnRateFactor(sf)
-	log.Printf("[rl] ResetVector n=%d city=%s spawn_rate_factor=%.3f", int(req.NumEnvs), city, sf)
+	complexity := s.complexityLevel()
+	log.Printf("[rl] ResetVector n=%d city=%s spawn_rate_factor=%.3f complexity=%d", int(req.NumEnvs), city, sf, complexity)
 
 	n := int(req.NumEnvs)
 	if n <= 0 {
@@ -201,6 +257,7 @@ func (s *GRPCService) ResetVector(_ context.Context, req *pb.VectorResetRequest)
 	for i := 0; i < n; i++ {
 		go func(idx int) {
 			defer wg.Done()
+			s.vecEnvs[idx].SetComplexity(complexity)
 			obs, mask := s.vecEnvs[idx].Reset(city, sf)
 			copy(allObs[idx*ObsDim:(idx+1)*ObsDim], obs)
 			copy(allMask[idx*MaskSize:(idx+1)*MaskSize], mask)
@@ -310,6 +367,7 @@ func (s *GRPCService) RunVectorEpisode(stream pb.RLEnv_RunVectorEpisodeServer) e
 					copy(termObs[idx*ObsDim:(idx+1)*ObsDim], obs)
 					termMu.Unlock()
 					// Native AutoReset
+					env.SetComplexity(s.complexityLevel())
 					obs, mask = env.Reset(env.gs.SelectedCity, s.spawnRateFactor())
 				}
 

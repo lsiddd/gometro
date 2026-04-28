@@ -6,37 +6,39 @@ import (
 )
 
 type GameState struct {
-	Paused                bool
-	SpawnStationsEnabled  bool
-	Speed                 float64
-	FastForward           int // 0=1x, 1=2x, 2=4x
-	Score                 int
-	Week                  int
-	Day                   int
-	Stations              []*components.Station
-	Lines                 []*components.Line
-	Trains                []*components.Train
-	Passengers            []*components.Passenger
-	SelectedLine          int
-	MaxLines              int
-	AvailableLines        int
-	Bridges               int
-	Carriages             int
-	Interchanges          int
-	AvailableTrains       int
-	GameOver              bool
-	SelectedCity          string
-	Rivers                []*components.River
-	LastSpawnTime         float64
-	LastStationSpawnTime  float64
-	WeekStartTime         float64
-	StationIDCounter      int
-	TrainIDCounter        int
-	PassengersDelivered   int
-	GameStartTime         float64
-	CameraZoom            float64
-	SimTimeMs             float64
-	GraphDirty            bool
+	Paused               bool
+	SpawnStationsEnabled bool
+	UpgradesEnabled      bool
+	StationSpawnLimit    int
+	Speed                float64
+	FastForward          int // 0=1x, 1=2x, 2=4x
+	Score                int
+	Week                 int
+	Day                  int
+	Stations             []*components.Station
+	Lines                []*components.Line
+	Trains               []*components.Train
+	Passengers           []*components.Passenger
+	SelectedLine         int
+	MaxLines             int
+	AvailableLines       int
+	Bridges              int
+	Carriages            int
+	Interchanges         int
+	AvailableTrains      int
+	GameOver             bool
+	SelectedCity         string
+	Rivers               []*components.River
+	LastSpawnTime        float64
+	LastStationSpawnTime float64
+	WeekStartTime        float64
+	StationIDCounter     int
+	TrainIDCounter       int
+	PassengersDelivered  int
+	GameStartTime        float64
+	CameraZoom           float64
+	SimTimeMs            float64
+	GraphDirty           bool
 	// SpawnRateFactor is a curriculum-learning multiplier applied to both the
 	// passenger and station spawn intervals. Values > 1.0 stretch the interval
 	// (slower spawning, easier game); 1.0 = normal difficulty. Set at episode
@@ -84,6 +86,8 @@ func NewGameState() *GameState {
 func (gs *GameState) Reset() {
 	gs.Paused = false
 	gs.SpawnStationsEnabled = true
+	gs.UpgradesEnabled = true
+	gs.StationSpawnLimit = 0
 	gs.Speed = 1.0
 	gs.FastForward = 0
 	gs.Score = 0

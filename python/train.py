@@ -39,8 +39,8 @@ from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.vec_env import VecMonitor
 
-from constants import MASK_SIZE, TRAIN_BASE_PORT
-from env import MiniMetroVecEnv
+from constants import MASK_SIZE, NUM_ACTION_CATS, TRAIN_BASE_PORT
+from env import MiniMetroFrameStack, MiniMetroVecEnv
 from models import MetroFeatureExtractor
 from policy import MetroPolicy
 
@@ -52,12 +52,26 @@ CHECKPOINT_FREQ  = 50_000
 EVAL_FREQ        = 100_000
 EVAL_EPISODES    = 16       # was 4 — more episodes → lower variance
 TRACE_INTERVAL_S = 10.0
+FRAME_STACK      = 4
+
+PPO_N_STEPS      = 1024
+PPO_BATCH_SIZE   = 1024
+PPO_N_EPOCHS     = 3
+PPO_GAMMA        = 0.999
+PPO_GAE_LAMBDA   = 0.97
+PPO_CLIP_RANGE   = 0.15
+PPO_MAX_GRAD_NORM = 0.5
+PPO_TARGET_KL    = 0.03
 
 # Learning-rate schedule: linear decay from LR_START to LR_END over
 # LR_DECAY_STEPS total timesteps, then held constant at LR_END.
 LR_START       = 3e-4
 LR_END         = 1e-5
 LR_DECAY_STEPS = 10_000_000
+
+ENT_START       = 0.02
+ENT_END         = 0.002
+ENT_DECAY_STEPS = 5_000_000
 
 
 class LinearLRSchedule:
@@ -122,7 +136,8 @@ class CurriculumCallback(BaseCallback):
     passengers per minute), making the game easier.
 
     Schedule (index 0 = easiest):
-        [4.0, 3.0, 2.0, 1.5, 1.25, 1.0]
+        spawn-rate factors: [4.0, 3.0, 2.0, 1.5, 1.25, 1.0]
+        complexity levels:   [0,   1,   2,   3,   4,    4]
 
     Promotion rule: rolling mean weeks survived over the last ``window``
     completed episodes exceeds ``promote_threshold``  → advance one level.
@@ -131,6 +146,7 @@ class CurriculumCallback(BaseCallback):
     """
 
     SCHEDULE: list[float] = [4.0, 3.0, 2.0, 1.5, 1.25, 1.0]
+    COMPLEXITY: list[int] = [0, 1, 2, 3, 4, 4]
 
     def __init__(
         self,
@@ -166,6 +182,7 @@ class CurriculumCallback(BaseCallback):
             self.logger.record(
                 "curriculum/spawn_rate_factor", self.SCHEDULE[self._level]
             )
+            self.logger.record("curriculum/complexity", self.COMPLEXITY[self._level])
 
             prev_level = self._level
             max_level = len(self.SCHEDULE) - 1
@@ -196,6 +213,8 @@ class CurriculumCallback(BaseCallback):
 
     def _set_difficulty(self, level: int) -> None:
         factor = self.SCHEDULE[level]
+        complexity = self.COMPLEXITY[level]
+        self._vec_env.env_method("set_complexity", complexity)
         self._vec_env.env_method("set_difficulty", factor)
 
 
@@ -207,6 +226,72 @@ class InvalidActionRateCallback(BaseCallback):
         if infos:
             invalid = [float(info.get("invalid_action", 0.0)) for info in infos]
             self.logger.record("rollout/invalid_action_rate", float(np.mean(invalid)))
+        return True
+
+
+class RolloutDiagnosticsCallback(BaseCallback):
+    """Logs gameplay metrics that reveal whether reward gains map to better play."""
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        actions = self.locals.get("actions", None)
+        if not infos:
+            return True
+
+        for key in ("score", "passengers_delivered", "week", "stations"):
+            values = [float(info.get(key, 0.0)) for info in infos]
+            self.logger.record(f"game/{key}", float(np.mean(values)))
+
+        for key in ("queue_pressure", "overcrowd_pressure", "danger_count"):
+            values = [float(info.get(key, 0.0)) for info in infos]
+            self.logger.record(f"game/{key}", float(np.mean(values)))
+
+        if actions is not None:
+            actions_arr = np.asarray(actions)
+            if actions_arr.ndim >= 2 and actions_arr.shape[1] > 0:
+                cats = actions_arr[:, 0].astype(np.int64)
+                self.logger.record("actions/noop_rate", float(np.mean(cats == 0)))
+                for cat in range(NUM_ACTION_CATS):
+                    self.logger.record(
+                        f"actions/cat_{cat}_rate",
+                        float(np.mean(cats == cat)),
+                    )
+
+        for key in (
+            "reward_delivered",
+            "reward_queue",
+            "reward_queue_delta",
+            "reward_overcrowd",
+            "reward_overcrowd_delta",
+            "reward_danger",
+            "reward_noop",
+        ):
+            values = [float(info.get(key, 0.0)) for info in infos if key in info]
+            if values:
+                self.logger.record(f"reward_components/{key}", float(np.mean(values)))
+
+        return True
+
+
+class EntropyScheduleCallback(BaseCallback):
+    """Linearly decays PPO entropy regularisation over global timesteps."""
+
+    def __init__(
+        self,
+        start: float = ENT_START,
+        end: float = ENT_END,
+        decay_steps: int = ENT_DECAY_STEPS,
+    ):
+        super().__init__(verbose=0)
+        self.start = start
+        self.end = end
+        self.decay_steps = decay_steps
+
+    def _on_step(self) -> bool:
+        frac = min(self.model.num_timesteps / max(self.decay_steps, 1), 1.0)
+        ent_coef = self.start + frac * (self.end - self.start)
+        self.model.ent_coef = float(np.clip(ent_coef, self.end, self.start))
+        self.logger.record("train/ent_coef", self.model.ent_coef)
         return True
 
 
@@ -391,6 +476,9 @@ class TracedMaskableEvalCallback(MaskableEvalCallback):
 
 
 def train(args: argparse.Namespace):
+    if args.frame_stack < 1:
+        raise ValueError("--frame-stack must be >= 1")
+
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -401,7 +489,10 @@ def train(args: argparse.Namespace):
         "startup "
         f"n_envs={n} city={args.city} "
         f"torch_threads={torch.get_num_threads()} "
-        f"trace_interval={args.trace_interval}s"
+        f"trace_interval={args.trace_interval}s "
+        f"frame_stack={args.frame_stack} "
+        f"n_steps={PPO_N_STEPS} batch_size={PPO_BATCH_SIZE} "
+        f"n_epochs={PPO_N_EPOCHS} clip={PPO_CLIP_RANGE} target_kl={PPO_TARGET_KL}"
     )
 
     vec_env = MiniMetroVecEnv(
@@ -412,6 +503,8 @@ def train(args: argparse.Namespace):
         trace_interval=args.trace_interval,
     )
     vec_env = VecMonitor(vec_env)
+    if args.frame_stack > 1:
+        vec_env = MiniMetroFrameStack(vec_env, n_stack=args.frame_stack)
 
     # Keep the primary eval callback on a fixed benchmark. If curriculum also
     # mutates this env, `eval/mean_reward` becomes a moving target and can
@@ -424,6 +517,8 @@ def train(args: argparse.Namespace):
         trace_interval=args.trace_interval,
     )
     eval_env = VecMonitor(eval_env)
+    if args.frame_stack > 1:
+        eval_env = MiniMetroFrameStack(eval_env, n_stack=args.frame_stack)
 
     if args.resume:
         print(f"Resuming from {args.resume}")
@@ -437,15 +532,16 @@ def train(args: argparse.Namespace):
         model = TracedMaskablePPO(
             MetroPolicy,
             vec_env,
-            n_steps=2048,
-            batch_size=2048,
-            n_epochs=4,
-            gamma=0.999,        # Increased from 0.99 to 0.999 for much longer effective horizon
-            gae_lambda=0.95,
+            n_steps=PPO_N_STEPS,
+            batch_size=PPO_BATCH_SIZE,
+            n_epochs=PPO_N_EPOCHS,
+            gamma=PPO_GAMMA,
+            gae_lambda=PPO_GAE_LAMBDA,
             learning_rate=lr_schedule,
-            ent_coef=0.005,     # Decreased from 0.05 to reduce excessive random action noise
-            clip_range=0.2,
-            max_grad_norm=0.5,
+            ent_coef=ENT_START,
+            clip_range=PPO_CLIP_RANGE,
+            max_grad_norm=PPO_MAX_GRAD_NORM,
+            target_kl=PPO_TARGET_KL,
             rollout_buffer_class=ConditionalMaskRolloutBuffer,
             tensorboard_log=LOG_DIR,
             policy_kwargs={
@@ -460,7 +556,9 @@ def train(args: argparse.Namespace):
         TraceCallback(interval_s=args.trace_interval),
         CurriculumCallback(vec_env, window=50, promote_threshold=10.0,
                            demote_threshold=4.0, verbose=1),
+        EntropyScheduleCallback(),
         InvalidActionRateCallback(),
+        RolloutDiagnosticsCallback(),
         TracedCheckpointCallback(
             save_freq=max(CHECKPOINT_FREQ // n, 1),
             save_path=CHECKPOINT_DIR,
@@ -539,4 +637,6 @@ if __name__ == "__main__":
                         help="Path to a checkpoint .zip to continue training from")
     parser.add_argument("--trace-interval", type=float, default=TRACE_INTERVAL_S,
                         help="Seconds between debug trace prints during training")
+    parser.add_argument("--frame-stack", type=int, default=FRAME_STACK,
+                        help="Number of recent observations to stack for temporal context")
     train(parser.parse_args())

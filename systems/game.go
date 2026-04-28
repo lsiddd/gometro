@@ -155,6 +155,9 @@ func (g *Game) Update(gs *state.GameState, deltaTime, screenWidth, screenHeight 
 		gs.AvailableTrains++
 		gs.CameraZoom = math.Max(0.55, 1.0-float64(gs.Week-1)*0.03)
 		log.Printf("[Game] Week %d started — trains=%d stations=%d score=%d", gs.Week, gs.AvailableTrains, len(gs.Stations), gs.Score)
+		if !gs.UpgradesEnabled {
+			return ""
+		}
 		return "show_upgrades"
 	}
 

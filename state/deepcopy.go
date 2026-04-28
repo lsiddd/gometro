@@ -196,6 +196,8 @@ func (gs *GameState) DeepCopy() *GameState {
 	cp := &GameState{
 		Paused:               false, // never pause during simulation
 		SpawnStationsEnabled: false, // keep station count fixed during evaluation
+		UpgradesEnabled:      gs.UpgradesEnabled,
+		StationSpawnLimit:    gs.StationSpawnLimit,
 		Speed:                gs.Speed,
 		FastForward:          0,
 		Score:                gs.Score,
@@ -220,7 +222,7 @@ func (gs *GameState) DeepCopy() *GameState {
 		CameraZoom:           gs.CameraZoom,
 		SimTimeMs:            gs.SimTimeMs,
 		SpawnRateFactor:      gs.SpawnRateFactor,
-		GraphDirty:           true, // force rebuild with new pointer set
+		GraphDirty:           true,      // force rebuild with new pointer set
 		Rivers:               gs.Rivers, // immutable — safe to share
 		Stations:             newStations,
 		Lines:                newLines,

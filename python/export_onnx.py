@@ -93,6 +93,7 @@ class AutoregressiveActor(nn.Module):
             int64 [B, 4]
         """
         features  = self.features_extractor(obs)
+        station_embeddings = getattr(self.features_extractor, "last_station_embeddings", None)
         latent_pi = self.mlp_extractor.forward_actor(features)
 
         net      = self.action_net
@@ -102,7 +103,13 @@ class AutoregressiveActor(nn.Module):
         offset   = 0
 
         for i in range(len(net.action_dims)):
-            logits     = net.heads[i](context)
+            if i == 2 and station_embeddings is not None:
+                query = net.station_query(context)
+                query = torch.nn.functional.normalize(query, dim=-1)
+                keys = torch.nn.functional.normalize(station_embeddings, dim=-1)
+                logits = torch.einsum("bd,bnd->bn", query, keys) * (query.shape[-1] ** 0.5)
+            else:
+                logits = net.heads[i](context)
             if i == 1:
                 act = sampled[0].squeeze(-1)
                 mask_table = mask_bool[

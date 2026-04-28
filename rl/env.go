@@ -5,6 +5,8 @@
 package rl
 
 import (
+	"math"
+
 	"minimetro-go/config"
 	"minimetro-go/state"
 	"minimetro-go/systems"
@@ -21,12 +23,17 @@ const actionIntervalFrames = 18
 type RLEnv struct {
 	gs   *state.GameState
 	game *systems.Game
+	cfg  ComplexityConfig
 
 	// Reward tracking: compare current tick against previous values.
-	prevDelivered int
-	prevWeek      int
-	lastReward    RewardBreakdown
-	lastValid     bool
+	prevDelivered         int
+	prevWeek              int
+	prevQueuePressure     float64
+	prevOvercrowdPressure float64
+	consecutiveNoOp       int
+	lastReward            RewardBreakdown
+	lastValid             bool
+	lastActionCategory    int
 
 	// Upgrade modal state.
 	inUpgradeModal bool
@@ -34,9 +41,31 @@ type RLEnv struct {
 
 }
 
+type ComplexityConfig struct {
+	Level             int
+	RiversEnabled     bool
+	UpgradesEnabled   bool
+	StationSpawnLimit int
+}
+
+func ComplexityForLevel(level int) ComplexityConfig {
+	switch {
+	case level <= 0:
+		return ComplexityConfig{Level: 0, RiversEnabled: false, UpgradesEnabled: false, StationSpawnLimit: 6}
+	case level == 1:
+		return ComplexityConfig{Level: 1, RiversEnabled: false, UpgradesEnabled: false, StationSpawnLimit: 10}
+	case level == 2:
+		return ComplexityConfig{Level: 2, RiversEnabled: false, UpgradesEnabled: true, StationSpawnLimit: 16}
+	case level == 3:
+		return ComplexityConfig{Level: 3, RiversEnabled: true, UpgradesEnabled: true, StationSpawnLimit: 24}
+	default:
+		return ComplexityConfig{Level: 4, RiversEnabled: true, UpgradesEnabled: true, StationSpawnLimit: 0}
+	}
+}
+
 // NewRLEnv allocates an RLEnv. Call Reset before the first Step.
 func NewRLEnv() *RLEnv {
-	return &RLEnv{}
+	return &RLEnv{cfg: ComplexityForLevel(4)}
 }
 
 // Reset initialises a new episode for the given city (e.g. "london").
@@ -48,20 +77,37 @@ func (e *RLEnv) Reset(city string, spawnRateFactor float64) (obs []float32, mask
 	e.gs.SelectedCity = city
 	e.game = systems.NewGame()
 	e.game.InitGame(e.gs, systems.SimScreenWidth, systems.SimScreenHeight)
+	e.applyComplexity()
 	if spawnRateFactor > 0 {
 		e.gs.SpawnRateFactor = spawnRateFactor
 	}
 
 	e.prevDelivered = 0
 	e.prevWeek = e.gs.Week
+	e.prevQueuePressure, e.prevOvercrowdPressure, _ = e.rewardStatePressure()
+	e.consecutiveNoOp = 0
 	e.lastReward = RewardBreakdown{}
 	e.lastValid = true
+	e.lastActionCategory = ActNoOp
 	e.inUpgradeModal = false
 	e.upgradeChoices = nil
 
 	obs = BuildObservation(e)
 	mask = BuildActionMaskMulti(e)
 	return
+}
+
+func (e *RLEnv) SetComplexity(level int) {
+	e.cfg = ComplexityForLevel(level)
+}
+
+func (e *RLEnv) applyComplexity() {
+	e.gs.UpgradesEnabled = e.cfg.UpgradesEnabled
+	e.gs.StationSpawnLimit = e.cfg.StationSpawnLimit
+	if !e.cfg.RiversEnabled {
+		e.gs.Rivers = nil
+		e.gs.Bridges = 0
+	}
 }
 
 // Step advances the environment by one decision interval.
@@ -80,6 +126,11 @@ func (e *RLEnv) Step(action []int) (obs []float32, reward float64, done bool, ma
 	gs := e.gs
 
 	validAction := true
+	if len(action) == 4 {
+		e.lastActionCategory = action[0]
+	} else {
+		e.lastActionCategory = -1
+	}
 
 	if e.inUpgradeModal {
 		// Resolve upgrade choice. Only ActChooseUpgrade is valid here;
@@ -106,7 +157,19 @@ func (e *RLEnv) Step(action []int) (obs []float32, reward float64, done bool, ma
 		done = true
 	}
 
+	isNoOp := len(action) == 4 && action[0] == ActNoOp
+	if validAction && isNoOp && !e.inUpgradeModal {
+		e.consecutiveNoOp++
+	} else if validAction {
+		e.consecutiveNoOp = 0
+	}
+
 	reward = e.computeReward(done)
+	if validAction && isNoOp {
+		noopPenalty := e.computeNoOpPenalty()
+		reward -= noopPenalty
+		e.lastReward.NoOp = noopPenalty
+	}
 	if !validAction {
 		reward -= rewardInvalidAction
 		e.lastReward.InvalidAction = rewardInvalidAction
@@ -115,6 +178,7 @@ func (e *RLEnv) Step(action []int) (obs []float32, reward float64, done bool, ma
 	e.lastValid = validAction
 	e.prevDelivered = gs.PassengersDelivered
 	e.prevWeek = gs.Week
+	e.prevQueuePressure, e.prevOvercrowdPressure, _ = e.rewardStatePressure()
 
 	obs = BuildObservation(e)
 	mask = BuildActionMaskMulti(e)
@@ -151,51 +215,51 @@ func (e *RLEnv) runFrames() (gameOver bool) {
 // same rough O(1) range as passenger-delivery rewards. Larger values quickly
 // swamp the weekly-survival signal and destabilise PPO.
 const (
-	rewardPerPassenger    = 5.0   // dense delivery signal keeps throughput learning visible every step
-	rewardOvercrowdCoeff  = 0.02  // mild continuous congestion pressure without drowning dense rewards
-	rewardDangerThresh    = 0.80  // overcrowd fraction at which a station is "in danger"
-	rewardDangerPenalty   = 0.1   // soft warning near terminal overcrowding; terminal loss carries the main penalty
-	rewardWeekBonus       = 20.0  // explicit survival milestone reward once per in-game week
-	rewardTerminalPenalty = 100.0 // clear loss signal without overwhelming credit assignment
-	rewardInvalidAction   = 1.0   // small nudge; the action mask already removes most invalid exploration
+	rewardPerPassenger        = 3.0   // dense delivery signal keeps throughput learning visible every step
+	rewardQueueCoeff          = 0.03  // pressure from passengers waiting at stations, normalised by station capacity
+	rewardQueueDeltaCoeff     = 0.20  // rewards reducing queue pressure and penalises queue growth
+	rewardOvercrowdCoeff      = 0.75  // nonlinear congestion risk from squared overcrowd progress
+	rewardOvercrowdDeltaCoeff = 2.00  // stronger signal for moving stations away from terminal overcrowding
+	rewardDangerThresh        = 0.80  // overcrowd fraction at which a station is "in danger"
+	rewardDangerPenalty       = 0.5   // soft warning near terminal overcrowding; terminal loss carries the main penalty
+	rewardNoOpCriticalPenalty = 0.25  // discourages repeated inaction when queues are already risky
+	rewardWeekBonus           = 20.0  // explicit survival milestone reward once per in-game week
+	rewardTerminalPenalty     = 100.0 // clear loss signal without overwhelming credit assignment
+	rewardInvalidAction       = 1.0   // small nudge; the action mask already removes most invalid exploration
 )
 
 // RewardBreakdown stores the components of the most recent transition reward.
 type RewardBreakdown struct {
-	Delivered     float64
-	Overcrowd     float64
-	Danger        float64
-	Week          float64
-	Terminal      float64
-	InvalidAction float64
-	Total         float64
+	Delivered      float64
+	Queue          float64
+	QueueDelta     float64
+	Overcrowd      float64
+	OvercrowdDelta float64
+	Danger         float64
+	Week           float64
+	Terminal       float64
+	InvalidAction  float64
+	NoOp           float64
+	Total          float64
 }
 
 // computeReward returns the shaped reward for the last transition.
 //
-//	+rewardPerPassenger   × passengers delivered since last step
-//	-rewardOvercrowdCoeff × Σ(overcrowdProgress/OvercrowdTime)
-//	-rewardDangerPenalty  per station above rewardDangerThresh overcrowd
-//	+rewardWeekBonus      per new week completed
-//	-rewardTerminalPenalty on game over
+//	+rewardPerPassenger       × passengers delivered since last step
+//	-rewardQueueCoeff         × Σ(waiting passengers / station capacity)
+//	-rewardQueueDeltaCoeff    × queue pressure growth, positive when it shrinks
+//	-rewardOvercrowdCoeff     × Σ(overcrowdProgress/OvercrowdTime)²
+//	-rewardOvercrowdDeltaCoeff × overcrowd risk growth, positive when it shrinks
+//	-rewardDangerPenalty      per station above rewardDangerThresh overcrowd
+//	+rewardWeekBonus          per new week completed
+//	-rewardTerminalPenalty    on game over
 func (e *RLEnv) computeReward(done bool) float64 {
 	gs := e.gs
 
 	delivered := float64(gs.PassengersDelivered - e.prevDelivered)
-
-	var overcrowdSum float64
-	var dangerCount float64
-	for _, s := range gs.Stations {
-		effectiveLimit := float64(config.OvercrowdTime)
-		if s.OvercrowdIsGrace {
-			effectiveLimit += config.OvercrowdGraceExtra
-		}
-		frac := s.OvercrowdProgress / effectiveLimit
-		overcrowdSum += frac
-		if frac > rewardDangerThresh {
-			dangerCount++
-		}
-	}
+	queuePressure, overcrowdPressure, dangerCount := e.rewardStatePressure()
+	queueDelta := queuePressure - e.prevQueuePressure
+	overcrowdDelta := overcrowdPressure - e.prevOvercrowdPressure
 
 	weekBonus := 0.0
 	if gs.Week > e.prevWeek {
@@ -208,32 +272,93 @@ func (e *RLEnv) computeReward(done bool) float64 {
 	}
 
 	e.lastReward = RewardBreakdown{
-		Delivered: delivered * rewardPerPassenger,
-		Overcrowd: overcrowdSum * rewardOvercrowdCoeff,
-		Danger:    dangerCount * rewardDangerPenalty,
-		Week:      weekBonus,
-		Terminal:  terminal,
+		Delivered:      delivered * rewardPerPassenger,
+		Queue:          queuePressure * rewardQueueCoeff,
+		QueueDelta:     queueDelta * rewardQueueDeltaCoeff,
+		Overcrowd:      overcrowdPressure * rewardOvercrowdCoeff,
+		OvercrowdDelta: overcrowdDelta * rewardOvercrowdDeltaCoeff,
+		Danger:         dangerCount * rewardDangerPenalty,
+		Week:           weekBonus,
+		Terminal:       terminal,
 	}
-	return e.lastReward.Delivered - e.lastReward.Overcrowd - e.lastReward.Danger + e.lastReward.Week - e.lastReward.Terminal
+	return e.lastReward.Delivered -
+		e.lastReward.Queue -
+		e.lastReward.QueueDelta -
+		e.lastReward.Overcrowd -
+		e.lastReward.OvercrowdDelta -
+		e.lastReward.Danger +
+		e.lastReward.Week -
+		e.lastReward.Terminal
+}
+
+func (e *RLEnv) rewardStatePressure() (queuePressure, overcrowdPressure, dangerCount float64) {
+	cityCfg := config.Cities[e.gs.SelectedCity]
+	for _, s := range e.gs.Stations {
+		capacity := float64(s.Capacity(cityCfg.StationCapacity))
+		if capacity <= 0 {
+			continue
+		}
+		queuePressure += math.Min(float64(len(s.Passengers))/capacity, 3.0)
+
+		effectiveLimit := float64(config.OvercrowdTime)
+		if s.OvercrowdIsGrace {
+			effectiveLimit += config.OvercrowdGraceExtra
+		}
+		if effectiveLimit <= 0 {
+			continue
+		}
+		frac := math.Max(s.OvercrowdProgress/effectiveLimit, 0)
+		if frac > rewardDangerThresh {
+			dangerCount++
+		}
+		frac = math.Min(frac, 1.5)
+		overcrowdPressure += frac * frac
+	}
+	return
+}
+
+func (e *RLEnv) computeNoOpPenalty() float64 {
+	if e.consecutiveNoOp < 2 {
+		return 0
+	}
+	queuePressure, overcrowdPressure, dangerCount := e.rewardStatePressure()
+	if dangerCount == 0 && overcrowdPressure < 0.25 && queuePressure < 2.0 {
+		return 0
+	}
+	scale := 1.0 + 0.25*float64(e.consecutiveNoOp-2)
+	if scale > 3.0 {
+		scale = 3.0
+	}
+	return rewardNoOpCriticalPenalty * scale
 }
 
 // Info returns a map of diagnostic values for the current step. Included in
 // the HTTP /step response as the "info" field.
 func (e *RLEnv) Info() map[string]any {
 	gs := e.gs
+	queuePressure, overcrowdPressure, dangerCount := e.rewardStatePressure()
 	return map[string]any{
-		"week":                 gs.Week,
-		"score":                gs.Score,
-		"passengers_delivered": gs.PassengersDelivered,
-		"stations":             len(gs.Stations),
-		"game_over":            gs.GameOver,
-		"in_upgrade_modal":     e.inUpgradeModal,
-		"valid_action":         e.lastValid,
-		"reward_delivered":     e.lastReward.Delivered,
-		"reward_overcrowd":     e.lastReward.Overcrowd,
-		"reward_danger":        e.lastReward.Danger,
-		"reward_week":          e.lastReward.Week,
-		"reward_terminal":      e.lastReward.Terminal,
-		"reward_invalid":       e.lastReward.InvalidAction,
+		"week":                   gs.Week,
+		"score":                  gs.Score,
+		"passengers_delivered":   gs.PassengersDelivered,
+		"stations":               len(gs.Stations),
+		"action_category":        e.lastActionCategory,
+		"queue_pressure":         queuePressure,
+		"overcrowd_pressure":     overcrowdPressure,
+		"danger_count":           dangerCount,
+		"consecutive_noop":       e.consecutiveNoOp,
+		"game_over":              gs.GameOver,
+		"in_upgrade_modal":       e.inUpgradeModal,
+		"valid_action":           e.lastValid,
+		"reward_delivered":       e.lastReward.Delivered,
+		"reward_queue":           e.lastReward.Queue,
+		"reward_queue_delta":     e.lastReward.QueueDelta,
+		"reward_overcrowd":       e.lastReward.Overcrowd,
+		"reward_overcrowd_delta": e.lastReward.OvercrowdDelta,
+		"reward_danger":          e.lastReward.Danger,
+		"reward_week":            e.lastReward.Week,
+		"reward_terminal":        e.lastReward.Terminal,
+		"reward_invalid":         e.lastReward.InvalidAction,
+		"reward_noop":            e.lastReward.NoOp,
 	}
 }

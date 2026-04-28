@@ -33,15 +33,17 @@ class MetroFeatureExtractor(BaseFeaturesExtractor):
        - Linear(LINE_DIM → D_L) per line.
        - Line-station context: for each line, mean-pool the post-MP station
          embeddings weighted by topology membership, projected to D_L.
-       - Line representation: concat(line_embed, line_context) → [B, L, 2*D_L].
+       - Line-role context: the endpoint/middle/loop role tensor produces a
+         second station context, projected to D_L.
+       - Line representation: concat(line_embed, line_context, role_context)
+         → [B, L, 3*D_L].
 
     3. Readout
        - station_pool: mean over all station slots → [B, D_S].
-       - line_flat: reshape line representations → [B, L * 2*D_L].
+       - line_flat: reshape line representations → [B, L * 3*D_L].
 
     4. MLP head
-       - Input: concat(global[GLOBAL_DIM], station_pool[D_S], line_flat[L*2*D_L])
-       - Shape: (15 + 128 + 7*256) = 1935 → features_dim (768)
+       - Input: concat(global[GLOBAL_DIM], station_pool[D_S], line_flat[L*3*D_L])
     """
 
     def __init__(self, observation_space: spaces.Box, features_dim: int = 768):
@@ -57,7 +59,7 @@ class MetroFeatureExtractor(BaseFeaturesExtractor):
             GLOBAL_DIM
             + NUM_STATIONS * STATION_DIM
             + NUM_LINES * LINE_DIM
-            + NUM_STATIONS * NUM_LINES
+            + 2 * NUM_STATIONS * NUM_LINES
         )
 
         shape = observation_space.shape
@@ -100,8 +102,10 @@ class MetroFeatureExtractor(BaseFeaturesExtractor):
 
         self.line_embed = nn.Linear(LINE_DIM * self.n_stack, D_L)
         self.line_station_proj = nn.Linear(D_S, D_L)
+        self.line_role_proj = nn.Linear(D_S, D_L)
+        self.last_station_embeddings: torch.Tensor | None = None
 
-        combined_dim = (GLOBAL_DIM * self.n_stack) + D_S + NUM_LINES * D_L * 2
+        combined_dim = (GLOBAL_DIM * self.n_stack) + D_S + NUM_LINES * D_L * 3
         self.mlp = nn.Sequential(
             nn.Linear(combined_dim, features_dim),
             nn.ReLU(),
@@ -149,14 +153,18 @@ class MetroFeatureExtractor(BaseFeaturesExtractor):
         )
         idx += L * self.line_dim
 
-        # Topology is static relative to instantaneous validity, take most recent frame
-        topology = obs_seq[:, -1, idx:idx + L * N].view(b, L, N)
+        # Topology is static relative to instantaneous validity, take most recent frame.
+        # Membership is binary and drives graph connectivity. Role stores
+        # endpoint/middle/loop position and is used only as a line context.
+        membership = obs_seq[:, -1, idx:idx + L * N].view(b, L, N)
+        idx += L * N
+        role = obs_seq[:, -1, idx:idx + L * N].view(b, L, N)
 
         # ── Station path ─────────────────────────────────────────────────────
         h = self.station_embed(stations_ft)       # [B, N, D_S]
 
-        topo_t = topology.permute(0, 2, 1).float()   # [B, N, L]
-        adj    = topo_t @ topology.float()            # [B, N, N]
+        topo_t = membership.permute(0, 2, 1).float()   # [B, N, L]
+        adj    = topo_t @ membership.float()            # [B, N, N]
         row_sum  = adj.sum(dim=-1, keepdim=True).clamp(min=1.0)
         adj_norm = adj / row_sum                      # [B, N, N]
 
@@ -164,18 +172,24 @@ class MetroFeatureExtractor(BaseFeaturesExtractor):
             agg = adj_norm @ h                        # [B, N, D_S]
             h   = mp_update(torch.cat([h, agg], dim=-1))  # [B, N, D_S]
 
+        self.last_station_embeddings = h
         station_pool = h.mean(dim=1)                  # [B, D_S]
 
         # ── Line path ────────────────────────────────────────────────────────
         l_emb = self.line_embed(lines_ft)             # [B, L, D_L]
 
-        topo_count   = topology.float().sum(dim=-1, keepdim=True).clamp(min=1.0)
-        topo_norm    = topology.float() / topo_count  # [B, L, N]
+        topo_count   = membership.float().sum(dim=-1, keepdim=True).clamp(min=1.0)
+        topo_norm    = membership.float() / topo_count  # [B, L, N]
         line_ctx_raw = topo_norm @ h                  # [B, L, D_S]
         line_ctx     = self.line_station_proj(line_ctx_raw)  # [B, L, D_L]
 
-        line_repr = torch.cat([l_emb, line_ctx], dim=-1)  # [B, L, 2*D_L]
-        line_flat = line_repr.reshape(b, L * D_L * 2)     # [B, L*2*D_L]
+        role_count   = role.float().sum(dim=-1, keepdim=True).clamp(min=1.0)
+        role_norm    = role.float() / role_count
+        role_ctx_raw = role_norm @ h
+        role_ctx     = self.line_role_proj(role_ctx_raw)
+
+        line_repr = torch.cat([l_emb, line_ctx, role_ctx], dim=-1)  # [B, L, 3*D_L]
+        line_flat = line_repr.reshape(b, L * D_L * 3)              # [B, L*3*D_L]
 
         # ── Final MLP ────────────────────────────────────────────────────────
         combined = torch.cat([globals_ft, station_pool, line_flat], dim=1)

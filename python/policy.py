@@ -25,6 +25,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Categorical
 
 from sb3_contrib.common.maskable.policies import MaskableActorCriticPolicy
@@ -41,6 +42,9 @@ from constants import (
     NUM_ACTION_CATS,
     NUM_OPTIONS,
 )
+
+_D_STATION_PTR = 128
+_STATION_HEAD_IDX = 2
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +72,10 @@ class AutoregressiveActionNet(nn.Module):
             nn.Linear(latent_dim + i * embed_dim, action_dims[i])
             for i in range(n)
         ])
+        self.station_query = nn.Linear(
+            latent_dim + _STATION_HEAD_IDX * embed_dim,
+            _D_STATION_PTR,
+        )
         # One embedding table per head, except the last (no successor to condition).
         self.embeds = nn.ModuleList([
             nn.Embedding(action_dims[i], embed_dim)
@@ -100,9 +108,15 @@ class AutoregressiveDistribution:
         get_actions(deterministic) → [B, 4]
     """
 
-    def __init__(self, action_net: AutoregressiveActionNet, latent_pi: torch.Tensor):
+    def __init__(
+        self,
+        action_net: AutoregressiveActionNet,
+        latent_pi: torch.Tensor,
+        station_embeddings: torch.Tensor | None = None,
+    ):
         self.action_net = action_net
         self.latent_pi  = latent_pi
+        self.station_embeddings = station_embeddings
         self._masks: Optional[list[torch.Tensor]] = None
         # Cached per-head Categorical distributions, set during log_prob().
         self._cached_dists: Optional[list[Categorical]] = None
@@ -190,6 +204,14 @@ class AutoregressiveDistribution:
                 return raw_logits.masked_fill(~cond, -1e9)
         return self._masked_logits(raw_logits, head_idx)
 
+    def _head_logits(self, context: torch.Tensor, head_idx: int) -> torch.Tensor:
+        if head_idx == _STATION_HEAD_IDX and self.station_embeddings is not None:
+            query = self.action_net.station_query(context)
+            query = F.normalize(query, dim=-1)
+            keys = F.normalize(self.station_embeddings, dim=-1)
+            return torch.einsum("bd,bnd->bn", query, keys) * (query.shape[-1] ** 0.5)
+        return self.action_net.heads[head_idx](context)
+
     def _build_context(self, latent_pi: torch.Tensor, prev_actions: list[torch.Tensor]) -> torch.Tensor:
         """Concatenate latent_pi with embeddings of all previous actions."""
         parts = [latent_pi]
@@ -219,7 +241,7 @@ class AutoregressiveDistribution:
             act_cat = actions[:, 0] if i > 0 else None
             line_idx = actions[:, 1] if i > 1 else None
             logits = self._masked_logits_for_context(
-                net.heads[i](context), i, act_cat, line_idx
+                self._head_logits(context, i), i, act_cat, line_idx
             )
             dist   = Categorical(logits=logits)
             dists.append(dist)
@@ -248,7 +270,7 @@ class AutoregressiveDistribution:
         context = latent
         total   = torch.zeros(latent.shape[0], device=latent.device)
         for i in range(len(net.action_dims)):
-            logits = self._masked_logits(net.heads[i](context), i)
+            logits = self._masked_logits(self._head_logits(context, i), i)
             total  = total + Categorical(logits=logits).entropy()
             if i < len(net.embeds):
                 zero_emb = torch.zeros(latent.shape[0], net.embed_dim, device=latent.device)
@@ -265,7 +287,7 @@ class AutoregressiveDistribution:
             act_cat = sampled[0].squeeze(-1) if i > 0 and sampled else None
             line_idx = sampled[1].squeeze(-1) if i > 1 and len(sampled) > 1 else None
             logits = self._masked_logits_for_context(
-                net.heads[i](context), i, act_cat, line_idx
+                self._head_logits(context, i), i, act_cat, line_idx
             )
             dist   = Categorical(logits=logits)
             a_i    = dist.mode if deterministic else dist.sample()
@@ -301,6 +323,10 @@ class MetroPolicy(MaskableActorCriticPolicy):
 
     EMBED_DIM: int = 16
 
+    def _station_embeddings(self) -> torch.Tensor | None:
+        extractor = self.features_extractor
+        return getattr(extractor, "last_station_embeddings", None)
+
     def _build(self, lr_schedule: Schedule) -> None:
         # Standard build: constructs mlp_extractor, value_net, optimizer.
         super()._build(lr_schedule)
@@ -323,4 +349,8 @@ class MetroPolicy(MaskableActorCriticPolicy):
     def _get_action_dist_from_latent(
         self, latent_pi: torch.Tensor
     ) -> AutoregressiveDistribution:
-        return AutoregressiveDistribution(self.action_net, latent_pi)
+        return AutoregressiveDistribution(
+            self.action_net,
+            latent_pi,
+            station_embeddings=self._station_embeddings(),
+        )

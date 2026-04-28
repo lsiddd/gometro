@@ -5,8 +5,8 @@ import argparse
 import numpy as np
 from sb3_contrib import MaskablePPO
 
-from constants import TRAIN_BASE_PORT
-from env import MiniMetroEnv
+from constants import OBS_DIM, TRAIN_BASE_PORT
+from env import MiniMetroFrameStack, MiniMetroVecEnv
 from models import MetroFeatureExtractor
 
 # Evaluation runs on a port well above any training/pretrain range to avoid
@@ -20,20 +20,30 @@ def evaluate(model_path: str, n_episodes: int, port: int) -> None:
         model_path,
         custom_objects={"MetroFeatureExtractor": MetroFeatureExtractor},
     )
-    env = MiniMetroEnv(port=port, managed=True)
+    obs_shape = model.observation_space.shape
+    n_stack = 1
+    if obs_shape and len(obs_shape) == 1 and obs_shape[0] % OBS_DIM == 0:
+        n_stack = max(obs_shape[0] // OBS_DIM, 1)
+
+    env = MiniMetroVecEnv(n_envs=1, port=port, managed=True)
+    if n_stack > 1:
+        env = MiniMetroFrameStack(env, n_stack=n_stack)
 
     scores = []
     try:
         for ep in range(n_episodes):
-            obs, _ = env.reset()
+            obs = env.reset()
             done = False
             ep_reward = 0.0
             steps = 0
             while not done and steps < 2000:
-                mask = env.action_masks()
+                mask = np.asarray(env.action_masks())
                 action, _ = model.predict(obs, action_masks=mask, deterministic=True)
-                obs, reward, done, _trunc, info = env.step(action)
-                ep_reward += reward
+                env.step_async(action)
+                obs, reward, dones, infos = env.step_wait()
+                done = bool(dones[0])
+                info = infos[0]
+                ep_reward += float(reward[0])
                 steps += 1
             scores.append(info.get("score", 0))
             print(
