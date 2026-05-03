@@ -7,6 +7,7 @@ import math
 import random
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -147,6 +148,36 @@ def read_eval_summary(path: Path) -> tuple[float, dict[str, Any]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     summary = data["summary"]
     return float(summary["fitness"]), summary
+
+
+def log_progress(message: str) -> None:
+    print(f"[evolve {datetime.now().strftime('%H:%M:%S')}] {message}", flush=True)
+
+
+def fmt_float(value: Any, digits: int = 3) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def summary_line(summary: dict[str, Any] | None) -> str:
+    if not summary:
+        return "summary=none"
+    parts = [
+        f"fitness={fmt_float(summary.get('fitness'))}",
+        f"week={fmt_float(summary.get('mean_week'))}",
+        f"score={fmt_float(summary.get('mean_score'))}",
+        f"pax={fmt_float(summary.get('mean_passengers_delivered'))}",
+        f"noop={fmt_float(summary.get('mean_noop_rate'))}",
+        f"zero={fmt_float(summary.get('zero_throughput_rate'))}",
+        f"invalid={fmt_float(summary.get('mean_invalid_action_rate'))}",
+    ]
+    if "fitness_delta_vs_default" in summary:
+        parts.append(f"vs_default={fmt_float(summary.get('fitness_delta_vs_default'))}")
+    return " ".join(parts)
 
 
 def build_train_command(args: argparse.Namespace, ind_dir: Path, config_path: Path) -> list[str]:
@@ -460,33 +491,48 @@ def finalist_manifest(
     }
 
 
-def run_command(cmd: list[str], cwd: Path, log_path: Path) -> None:
+def run_command(cmd: list[str], cwd: Path, log_path: Path, label: str = "") -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    if label:
+        log_progress(f"{label} start log={log_path}")
     with log_path.open("w", encoding="utf-8") as log:
         log.write("$ " + " ".join(cmd) + "\n\n")
         log.flush()
-        subprocess.run(cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, check=True)
+        try:
+            subprocess.run(cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, check=True)
+        except subprocess.CalledProcessError:
+            if label:
+                log_progress(f"{label} failed elapsed={time.perf_counter() - started:.1f}s log={log_path}")
+            raise
+    if label:
+        log_progress(f"{label} done elapsed={time.perf_counter() - started:.1f}s")
 
 
 def evaluate_baseline(args: argparse.Namespace, run_dir: Path) -> dict[str, Any] | None:
     if args.skip_baseline or args.dry_run:
+        log_progress("baseline skipped")
         return None
     baseline_dir = run_dir / "baseline_default"
     eval_path = baseline_dir / "eval.json"
     if eval_path.exists() and args.resume_run:
         _, summary = read_eval_summary(eval_path)
+        log_progress(f"baseline reused {summary_line(summary)}")
         return summary
     append_event(run_dir, "baseline_start", {"dir": str(baseline_dir)})
+    log_progress(f"baseline start dir={baseline_dir}")
     python_dir = Path(__file__).resolve().parent
     run_command(
         build_train_command(args, baseline_dir, None),
         cwd=python_dir,
         log_path=baseline_dir / "train.log",
+        label="baseline train",
     )
     run_command(
         build_eval_command(args, baseline_dir, eval_path),
         cwd=python_dir,
         log_path=baseline_dir / "eval.log",
+        label="baseline eval",
     )
     _, summary = read_eval_summary(eval_path)
     write_json(
@@ -500,6 +546,7 @@ def evaluate_baseline(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]
         },
     )
     append_event(run_dir, "baseline_end", {"summary": summary})
+    log_progress(f"baseline done {summary_line(summary)}")
     return summary
 
 
@@ -518,16 +565,22 @@ def retrain_finalist(args: argparse.Namespace, source: Individual, rank: int, ru
             "summary": {"fitness": 0.0, "dry_run": True},
         }
     else:
+        log_progress(
+            f"retrain finalist_{rank:03d} source={source.id} "
+            f"source_fitness={fmt_float(source.fitness)}"
+        )
         python_dir = Path(__file__).resolve().parent
         run_command(
             build_retrain_command(args, finalist_dir, config_path),
             cwd=python_dir,
             log_path=finalist_dir / "retrain.log",
+            label=f"retrain finalist_{rank:03d}",
         )
         run_command(
             build_retrain_eval_command(args, finalist_dir, eval_path),
             cwd=python_dir,
             log_path=finalist_dir / "eval.log",
+            label=f"retrain eval finalist_{rank:03d}",
         )
         fitness, summary = read_eval_summary(eval_path)
         result = {
@@ -536,6 +589,7 @@ def retrain_finalist(args: argparse.Namespace, source: Individual, rank: int, ru
             "fitness": fitness,
             "summary": summary,
         }
+        log_progress(f"retrain finalist_{rank:03d} done {summary_line(summary)}")
     write_json(finalist_dir / "result.json", result)
     write_json(finalist_dir / "manifest.json", finalist_manifest(args, source, finalist_dir, config_path, eval_path))
     return result
@@ -543,8 +597,13 @@ def retrain_finalist(args: argparse.Namespace, source: Individual, rank: int, ru
 
 def retrain_finalists(args: argparse.Namespace, all_results: list[Individual], run_dir: Path) -> list[dict[str, Any]]:
     if args.retrain_top <= 0:
+        log_progress("retrain skipped")
         return []
     finalists = select_elites(all_results, args.retrain_top)
+    log_progress(
+        "retrain start "
+        + ", ".join(f"{ind.id}:{fmt_float(ind.fitness)}" for ind in finalists)
+    )
     results = [
         retrain_finalist(args, source, rank, run_dir)
         for rank, source in enumerate(finalists)
@@ -575,7 +634,16 @@ def evaluate_individual(
 
     if not args.dry_run and args.resume_run and eval_path.exists():
         individual.fitness, individual.eval_summary = read_eval_summary(eval_path)
+        log_progress(
+            f"generation={individual.generation:03d} {individual.id} reused "
+            f"{summary_line(individual.eval_summary)}"
+        )
     elif not args.dry_run:
+        log_progress(
+            f"generation={individual.generation:03d} {individual.id} "
+            f"start origin={individual.origin} parents={','.join(individual.parents) or '-'} "
+            f"dir={ind_dir}"
+        )
         append_event(
             run_dir,
             "individual_start",
@@ -589,11 +657,13 @@ def evaluate_individual(
             build_train_command(args, ind_dir, config_path),
             cwd=Path(__file__).resolve().parent,
             log_path=ind_dir / "train.log",
+            label=f"generation={individual.generation:03d} {individual.id} train",
         )
         run_command(
             build_eval_command(args, ind_dir, eval_path),
             cwd=Path(__file__).resolve().parent,
             log_path=ind_dir / "eval.log",
+            label=f"generation={individual.generation:03d} {individual.id} eval",
         )
         individual.fitness, individual.eval_summary = read_eval_summary(eval_path)
         if baseline_summary is not None:
@@ -624,6 +694,15 @@ def evaluate_individual(
                     "fitness": individual.fitness,
                 },
             )
+            log_progress(
+                f"generation={individual.generation:03d} {individual.id} pruned "
+                f"reason={reason} {summary_line(individual.eval_summary)}"
+            )
+        else:
+            log_progress(
+                f"generation={individual.generation:03d} {individual.id} done "
+                f"{summary_line(individual.eval_summary)}"
+            )
         append_event(
             run_dir,
             "individual_end",
@@ -637,6 +716,7 @@ def evaluate_individual(
     else:
         individual.fitness = 0.0
         individual.eval_summary = {"fitness": 0.0, "dry_run": True}
+        log_progress(f"generation={individual.generation:03d} {individual.id} dry_run")
 
     write_json(ind_dir / "individual.json", asdict(individual))
     write_json(ind_dir / "manifest.json", individual_manifest(args, individual, ind_dir, config_path, eval_path))
@@ -679,6 +759,11 @@ def next_generation(
     elites = select_elites(previous, elite_count)
     if not elites:
         raise ValueError("cannot create next generation without evaluated elites")
+    log_progress(
+        f"generation={generation:03d} create_population "
+        f"elites={','.join(f'{elite.id}:{fmt_float(elite.fitness)}' for elite in elites)} "
+        f"random_injected={random_count} sigma={sigma:.3f}"
+    )
 
     population: list[Individual] = []
     for idx, elite in enumerate(elites):
@@ -769,12 +854,24 @@ def run_evolution(args: argparse.Namespace) -> None:
         run_config,
     )
     append_event(run_dir, "run_start", run_config)
+    log_progress(
+        f"run start dir={run_dir} population={args.population} generations={args.generations} "
+        f"train_timesteps={args.train_timesteps} eval_episodes={args.eval_episodes} "
+        f"fitness={args.fitness_version}"
+    )
+    log_progress(
+        f"artifacts dashboard={run_dir / 'dashboard.html'} "
+        f"leaderboard={run_dir / 'leaderboard.json'} events={run_dir / 'events.jsonl'}"
+    )
+    for warning in run_config["guardrail_warnings"]:
+        log_progress(f"guardrail warning: {warning}")
     baseline_summary = evaluate_baseline(args, run_dir)
 
     population = initial_population(args.population, rng)
     all_results: list[Individual] = []
 
     for gen in range(args.generations):
+        log_progress(f"generation={gen:03d} start population={len(population)}")
         append_event(run_dir, "generation_start", {"generation": gen, "population": len(population)})
         evaluated = [
             evaluate_individual(args, individual, run_dir, baseline_summary)
@@ -804,6 +901,12 @@ def run_evolution(args: argparse.Namespace) -> None:
         write_leaderboard(run_dir, all_results)
         write_dashboard(run_dir, all_results, baseline_summary)
         append_event(run_dir, "generation_end", generation_row)
+        best_text = f"{elites[0].id}:{fmt_float(elites[0].fitness)}" if elites else "-"
+        log_progress(
+            f"generation={gen:03d} done best={best_text} "
+            f"mean_fitness={fmt_float(generation_row['mean_fitness'])} "
+            f"pruned={generation_row['pruned']}/{generation_row['evaluated']}"
+        )
         if gen + 1 >= args.generations:
             break
         population = next_generation(
@@ -840,6 +943,10 @@ def run_evolution(args: argparse.Namespace) -> None:
     write_leaderboard(run_dir, all_results)
     write_dashboard(run_dir, all_results, baseline_summary)
     append_event(run_dir, "run_end", {"best": asdict(best[0]) if best else None})
+    if best:
+        log_progress(f"run done best={best[0].id} {summary_line(best[0].eval_summary)}")
+    else:
+        log_progress("run done best=-")
 
 
 def main() -> None:

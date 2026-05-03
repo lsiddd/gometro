@@ -67,6 +67,10 @@ evolve-smoke run_dir=evo_smoke_dir: build _kill-servers
 # run the default robust evolutionary search; override args as needed:
 # just evolve evolution_runs/my_search 12 10 500000 32
 evolve run_dir=evo_run_dir population="12" generations="10" train_steps="500000" eval_episodes="32": build _kill-servers
+	@echo ">>> Evolution run: {{python_dir}}/{{run_dir}}"
+	@echo ">>> Dashboard:     {{python_dir}}/{{run_dir}}/dashboard.html"
+	@echo ">>> Leaderboard:   {{python_dir}}/{{run_dir}}/leaderboard.json"
+	@echo ">>> Events:        {{python_dir}}/{{run_dir}}/events.jsonl"
 	cd {{python_dir}} && uv run python evolve_rewards.py \
 		--run-dir {{run_dir}} \
 		--population {{population}} \
