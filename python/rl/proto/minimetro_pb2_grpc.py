@@ -298,6 +298,167 @@ class RLEnv(object):
             _registered_method=True)
 
 
+class ControlStub(object):
+    """Control exposes training-time knobs used by curriculum and evolutionary runs.
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.SetDifficulty = channel.unary_unary(
+                '/rl.Control/SetDifficulty',
+                request_serializer=rl_dot_proto_dot_minimetro__pb2.ResetRequest.SerializeToString,
+                response_deserializer=rl_dot_proto_dot_minimetro__pb2.Empty.FromString,
+                _registered_method=True)
+        self.SetComplexity = channel.unary_unary(
+                '/rl.Control/SetComplexity',
+                request_serializer=rl_dot_proto_dot_minimetro__pb2.ResetRequest.SerializeToString,
+                response_deserializer=rl_dot_proto_dot_minimetro__pb2.Empty.FromString,
+                _registered_method=True)
+        self.SetRewardConfig = channel.unary_unary(
+                '/rl.Control/SetRewardConfig',
+                request_serializer=rl_dot_proto_dot_minimetro__pb2.RewardConfigRequest.SerializeToString,
+                response_deserializer=rl_dot_proto_dot_minimetro__pb2.Empty.FromString,
+                _registered_method=True)
+
+
+class ControlServicer(object):
+    """Control exposes training-time knobs used by curriculum and evolutionary runs.
+    """
+
+    def SetDifficulty(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetComplexity(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetRewardConfig(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_ControlServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'SetDifficulty': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetDifficulty,
+                    request_deserializer=rl_dot_proto_dot_minimetro__pb2.ResetRequest.FromString,
+                    response_serializer=rl_dot_proto_dot_minimetro__pb2.Empty.SerializeToString,
+            ),
+            'SetComplexity': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetComplexity,
+                    request_deserializer=rl_dot_proto_dot_minimetro__pb2.ResetRequest.FromString,
+                    response_serializer=rl_dot_proto_dot_minimetro__pb2.Empty.SerializeToString,
+            ),
+            'SetRewardConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetRewardConfig,
+                    request_deserializer=rl_dot_proto_dot_minimetro__pb2.RewardConfigRequest.FromString,
+                    response_serializer=rl_dot_proto_dot_minimetro__pb2.Empty.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'rl.Control', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('rl.Control', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class Control(object):
+    """Control exposes training-time knobs used by curriculum and evolutionary runs.
+    """
+
+    @staticmethod
+    def SetDifficulty(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rl.Control/SetDifficulty',
+            rl_dot_proto_dot_minimetro__pb2.ResetRequest.SerializeToString,
+            rl_dot_proto_dot_minimetro__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetComplexity(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rl.Control/SetComplexity',
+            rl_dot_proto_dot_minimetro__pb2.ResetRequest.SerializeToString,
+            rl_dot_proto_dot_minimetro__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetRewardConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rl.Control/SetRewardConfig',
+            rl_dot_proto_dot_minimetro__pb2.RewardConfigRequest.SerializeToString,
+            rl_dot_proto_dot_minimetro__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
 class InferenceStub(object):
     """Inference is implemented by the Python inference server (infer.py).
     The Go live-game binary is the client (--rl-client flag).

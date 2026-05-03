@@ -3,7 +3,6 @@ package systems
 import (
 	"log"
 	"math"
-	"math/rand"
 	"minimetro-go/components"
 	"minimetro-go/config"
 	"minimetro-go/state"
@@ -75,8 +74,9 @@ func (g *Game) createInitialStations(gs *state.GameState, width, height float64)
 		maxAttempts := 200
 
 		for attempts < maxAttempts {
-			angle := rand.Float64() * math.Pi * 2
-			radius := spread * (0.5 + rand.Float64()*0.5)
+			rng := gs.Rand()
+			angle := rng.Float64() * math.Pi * 2
+			radius := spread * (0.5 + rng.Float64()*0.5)
 			x := centerX + math.Cos(angle)*radius
 			y := centerY + math.Sin(angle)*radius
 
@@ -120,9 +120,10 @@ func (g *Game) createInitialStations(gs *state.GameState, width, height float64)
 // Returns false only when 500 attempts with the widened radius all fail
 // (degenerate case: minDistance larger than the available canvas).
 func (g *Game) placeFallbackStation(gs *state.GameState, centerX, centerY, spread, minDistance float64, stationType config.StationType) bool {
+	rng := gs.Rand()
 	for fallback := 0; fallback < 500; fallback++ {
-		angle := rand.Float64() * math.Pi * 2
-		radius := spread * (0.3 + rand.Float64()*1.2)
+		angle := rng.Float64() * math.Pi * 2
+		radius := spread * (0.3 + rng.Float64()*1.2)
 		x := centerX + math.Cos(angle)*radius
 		y := centerY + math.Sin(angle)*radius
 		tooClose := false

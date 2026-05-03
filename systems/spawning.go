@@ -3,7 +3,6 @@ package systems
 import (
 	"log"
 	"math"
-	"math/rand"
 	"minimetro-go/components"
 	"minimetro-go/config"
 	"minimetro-go/state"
@@ -38,7 +37,8 @@ func (g *Game) SpawnPassenger(gs *state.GameState, nowMs float64) {
 	if len(gs.Stations) < 2 {
 		return
 	}
-	station := gs.Stations[rand.Intn(len(gs.Stations))]
+	rng := gs.Rand()
+	station := gs.Stations[rng.Intn(len(gs.Stations))]
 
 	availTypes := make(map[config.StationType]bool)
 	for _, s := range gs.Stations {
@@ -52,7 +52,7 @@ func (g *Game) SpawnPassenger(gs *state.GameState, nowMs float64) {
 		for t := range availTypes {
 			list = append(list, t)
 		}
-		dest := list[rand.Intn(len(list))]
+		dest := list[rng.Intn(len(list))]
 		passenger := components.NewPassenger(station, dest, nowMs)
 		passenger.Path = graph.FindPath(g.GraphManager, gs, station, dest)
 		passenger.PathIndex = 1
@@ -73,30 +73,31 @@ func (g *Game) SpawnStation(gs *state.GameState, screenWidth, screenHeight float
 	}
 
 	margin := 80.0
+	rng := gs.Rand()
 
 	tryPlace := func(minDist float64, attempts int) bool {
 		for i := 0; i < attempts; i++ {
 			var x, y float64
 			if isSpecial {
-				edge := rand.Intn(4)
+				edge := rng.Intn(4)
 				borderDepth := 0.25
 				switch edge {
 				case 0:
-					x = margin + rand.Float64()*(screenWidth-2*margin)
-					y = margin + rand.Float64()*screenHeight*borderDepth
+					x = margin + rng.Float64()*(screenWidth-2*margin)
+					y = margin + rng.Float64()*screenHeight*borderDepth
 				case 1:
-					x = screenWidth - margin - rand.Float64()*screenWidth*borderDepth
-					y = margin + rand.Float64()*(screenHeight-2*margin)
+					x = screenWidth - margin - rng.Float64()*screenWidth*borderDepth
+					y = margin + rng.Float64()*(screenHeight-2*margin)
 				case 2:
-					x = margin + rand.Float64()*(screenWidth-2*margin)
-					y = screenHeight - margin - rand.Float64()*screenHeight*borderDepth
+					x = margin + rng.Float64()*(screenWidth-2*margin)
+					y = screenHeight - margin - rng.Float64()*screenHeight*borderDepth
 				case 3:
-					x = margin + rand.Float64()*screenWidth*borderDepth
-					y = margin + rand.Float64()*(screenHeight-2*margin)
+					x = margin + rng.Float64()*screenWidth*borderDepth
+					y = margin + rng.Float64()*(screenHeight-2*margin)
 				}
 			} else {
-				x = margin + rand.Float64()*(screenWidth-margin*2)
-				y = margin + rand.Float64()*(screenHeight-margin*2)
+				x = margin + rng.Float64()*(screenWidth-margin*2)
+				y = margin + rng.Float64()*(screenHeight-margin*2)
 			}
 
 			tooClose := false
@@ -144,7 +145,8 @@ func (g *Game) getNewStationType(gs *state.GameState, nowMs float64) config.Stat
 	minutesPlayed := gameTime / 60000.0
 
 	specialTypes := config.SpecialTypes()
-	if minutesPlayed > 2 && rand.Float64() < 0.12 {
+	rng := gs.Rand()
+	if minutesPlayed > 2 && rng.Float64() < 0.12 {
 		usedSpecial := make(map[config.StationType]bool)
 		for _, s := range gs.Stations {
 			for _, sp := range specialTypes {
@@ -162,7 +164,7 @@ func (g *Game) getNewStationType(gs *state.GameState, nowMs float64) config.Stat
 		}
 
 		if len(available) > 0 {
-			return available[rand.Intn(len(available))]
+			return available[rng.Intn(len(available))]
 		}
 	}
 
@@ -183,12 +185,12 @@ func (g *Game) getNewStationType(gs *state.GameState, nowMs float64) config.Stat
 		probCircle = float64(sq+t) / float64(2*total)
 	}
 
-	val := rand.Float64()
+	val := rng.Float64()
 	if val < probCircle {
 		return config.Circle
 	}
 
-	if rand.Float64() < 0.75 {
+	if rng.Float64() < 0.75 {
 		return config.Triangle
 	}
 	return config.Square

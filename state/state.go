@@ -1,8 +1,10 @@
 package state
 
 import (
+	"math/rand"
 	"minimetro-go/components"
 	"slices"
+	"time"
 )
 
 type GameState struct {
@@ -44,6 +46,8 @@ type GameState struct {
 	// (slower spawning, easier game); 1.0 = normal difficulty. Set at episode
 	// reset by the Python training loop via the ResetRequest proto field.
 	SpawnRateFactor float64
+	Seed            int64
+	rng             *rand.Rand
 }
 
 // AddStation appends station to the game and increments the ID counter.
@@ -79,8 +83,21 @@ func (gs *GameState) RemovePassenger(p *components.Passenger) {
 
 func NewGameState() *GameState {
 	gs := &GameState{}
+	gs.SetSeed(time.Now().UnixNano())
 	gs.Reset()
 	return gs
+}
+
+func (gs *GameState) SetSeed(seed int64) {
+	gs.Seed = seed
+	gs.rng = rand.New(rand.NewSource(seed))
+}
+
+func (gs *GameState) Rand() *rand.Rand {
+	if gs.rng == nil {
+		gs.SetSeed(time.Now().UnixNano())
+	}
+	return gs.rng
 }
 
 func (gs *GameState) Reset() {
@@ -113,4 +130,7 @@ func (gs *GameState) Reset() {
 	gs.SimTimeMs = 0.0
 	gs.GraphDirty = true
 	gs.SpawnRateFactor = 1.0
+	if gs.rng == nil {
+		gs.SetSeed(time.Now().UnixNano())
+	}
 }

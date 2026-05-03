@@ -76,10 +76,10 @@ func (g *Game) GenerateUpgradeChoices(gs *state.GameState) []string {
 		pool = append(pool, weightedUpgrade{UpgradeCarriage, 1.0})
 	}
 
-	return pickWeightedUpgrades(pool, 2)
+	return pickWeightedUpgrades(gs.Rand(), pool, 2)
 }
 
-func pickWeightedUpgrades(pool []weightedUpgrade, n int) []string {
+func pickWeightedUpgrades(rng *rand.Rand, pool []weightedUpgrade, n int) []string {
 	result := make([]string, 0, n)
 	remaining := make([]weightedUpgrade, len(pool))
 	copy(remaining, pool)
@@ -89,7 +89,7 @@ func pickWeightedUpgrades(pool []weightedUpgrade, n int) []string {
 		for _, w := range remaining {
 			total += w.weight
 		}
-		r := rand.Float64() * total
+		r := rng.Float64() * total
 		cumulative := 0.0
 		chosen := len(remaining) - 1
 		for j, w := range remaining {

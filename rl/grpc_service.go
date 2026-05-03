@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	pb "minimetro-go/rl/proto"
@@ -18,16 +17,25 @@ import (
 // GRPCService implements pb.RLEnvServer.
 type GRPCService struct {
 	pb.UnimplementedRLEnvServer
+	pb.UnimplementedControlServer
 	env                    *RLEnv   // Legacy single environment
 	vecEnvs                []*RLEnv // Vectorized execution batch
 	mu                     sync.RWMutex
 	currentSpawnRateFactor float64
 	currentComplexityLevel int
+	currentRewardConfig    RewardConfig
+	vecSeeds               []int64
+	vecEpisodes            []int64
 	lastDifficultyLog      time.Time
 }
 
 func NewGRPCService() *GRPCService {
-	return &GRPCService{env: NewRLEnv(), currentSpawnRateFactor: 1.0, currentComplexityLevel: 4}
+	return &GRPCService{
+		env:                    NewRLEnv(),
+		currentSpawnRateFactor: 1.0,
+		currentComplexityLevel: 4,
+		currentRewardConfig:    DefaultRewardConfig(),
+	}
 }
 
 func (s *GRPCService) setSpawnRateFactor(sf float64) {
@@ -80,78 +88,50 @@ func (s *GRPCService) complexityLevel() int {
 	return level
 }
 
-// RegisterControlService exposes a tiny manually-registered control endpoint.
-// It avoids regenerating the protobuf stubs just to let the Python curriculum
-// update the spawn-rate factor used by native vector auto-reset.
-func RegisterControlService(reg grpc.ServiceRegistrar, svc *GRPCService) {
-	reg.RegisterService(&grpc.ServiceDesc{
-		ServiceName: "rl.Control",
-		HandlerType: (*controlServer)(nil),
-		Methods: []grpc.MethodDesc{
-			{
-				MethodName: "SetDifficulty",
-				Handler:    controlSetDifficultyHandler,
-			},
-			{
-				MethodName: "SetComplexity",
-				Handler:    controlSetComplexityHandler,
-			},
-		},
-		Streams:  []grpc.StreamDesc{},
-		Metadata: "rl/proto/minimetro.proto",
-	}, svc)
+func (s *GRPCService) setRewardConfig(cfg RewardConfig) error {
+	if err := ValidateRewardConfig(cfg); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.currentRewardConfig = cfg
+	if err := s.env.SetRewardConfig(cfg); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	for _, env := range s.vecEnvs {
+		if err := env.SetRewardConfig(cfg); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
+	s.mu.Unlock()
+	log.Printf("[rl] reward_config set per_passenger=%.3f week_bonus=%.3f terminal=%.3f", cfg.PerPassenger, cfg.WeekBonus, cfg.TerminalPenalty)
+	return nil
 }
 
-type controlServer interface{}
-
-func controlSetDifficultyHandler(
-	srv any,
-	ctx context.Context,
-	dec func(any) error,
-	interceptor grpc.UnaryServerInterceptor,
-) (any, error) {
-	in := new(pb.ResetRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		srv.(*GRPCService).setSpawnRateFactor(float64(in.SpawnRateFactor))
-		return &pb.Empty{}, nil
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/rl.Control/SetDifficulty",
-	}
-	handler := func(ctx context.Context, req any) (any, error) {
-		srv.(*GRPCService).setSpawnRateFactor(float64(req.(*pb.ResetRequest).SpawnRateFactor))
-		return &pb.Empty{}, nil
-	}
-	return interceptor(ctx, in, info, handler)
+func (s *GRPCService) rewardConfig() RewardConfig {
+	s.mu.RLock()
+	cfg := s.currentRewardConfig
+	s.mu.RUnlock()
+	return cfg
 }
 
-func controlSetComplexityHandler(
-	srv any,
-	ctx context.Context,
-	dec func(any) error,
-	interceptor grpc.UnaryServerInterceptor,
-) (any, error) {
-	in := new(pb.ResetRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func (s *GRPCService) SetDifficulty(_ context.Context, req *pb.ResetRequest) (*pb.Empty, error) {
+	s.setSpawnRateFactor(float64(req.SpawnRateFactor))
+	return &pb.Empty{}, nil
+}
+
+func (s *GRPCService) SetComplexity(_ context.Context, req *pb.ResetRequest) (*pb.Empty, error) {
+	s.setComplexityLevel(int(req.SpawnRateFactor))
+	return &pb.Empty{}, nil
+}
+
+func (s *GRPCService) SetRewardConfig(_ context.Context, req *pb.RewardConfigRequest) (*pb.Empty, error) {
+	cfg := rewardConfigFromProto(req)
+	if err := s.setRewardConfig(cfg); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	if interceptor == nil {
-		srv.(*GRPCService).setComplexityLevel(int(in.SpawnRateFactor))
-		return &pb.Empty{}, nil
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/rl.Control/SetComplexity",
-	}
-	handler := func(ctx context.Context, req any) (any, error) {
-		srv.(*GRPCService).setComplexityLevel(int(req.(*pb.ResetRequest).SpawnRateFactor))
-		return &pb.Empty{}, nil
-	}
-	return interceptor(ctx, in, info, handler)
+	return &pb.Empty{}, nil
 }
 
 // ── Info ─────────────────────────────────────────────────────────────────────
@@ -181,8 +161,11 @@ func (s *GRPCService) Reset(_ context.Context, req *pb.ResetRequest) (*pb.ResetR
 	}
 	s.setSpawnRateFactor(sf)
 	s.env.SetComplexity(s.complexityLevel())
+	if err := s.env.SetRewardConfig(s.rewardConfig()); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 	log.Printf("[rl] Reset city=%s spawn_rate_factor=%.3f complexity=%d", city, sf, s.complexityLevel())
-	obs, mask := s.env.Reset(city, sf)
+	obs, mask := s.env.ResetWithSeed(city, sf, req.GetSeed())
 	return &pb.ResetResponse{Obs: obs, Mask: boolSlice(mask)}, nil
 }
 
@@ -248,22 +231,49 @@ func (s *GRPCService) ResetVector(_ context.Context, req *pb.VectorResetRequest)
 			s.vecEnvs[i] = NewRLEnv()
 		}
 	}
+	if len(s.vecSeeds) != n {
+		s.vecSeeds = make([]int64, n)
+		s.vecEpisodes = make([]int64, n)
+	}
+	baseSeed := req.GetSeed()
+	for i := 0; i < n; i++ {
+		if baseSeed != 0 {
+			s.vecSeeds[i] = baseSeed + int64(i)
+		} else {
+			s.vecSeeds[i] = 0
+		}
+		s.vecEpisodes[i] = 0
+	}
+	rewardCfg := s.rewardConfig()
 
 	allObs := make([]float32, n*ObsDim)
 	allMask := make([]bool, n*MaskSize)
 
 	var wg sync.WaitGroup
+	var resetErr error
+	var resetErrMu sync.Mutex
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func(idx int) {
 			defer wg.Done()
 			s.vecEnvs[idx].SetComplexity(complexity)
-			obs, mask := s.vecEnvs[idx].Reset(city, sf)
+			if err := s.vecEnvs[idx].SetRewardConfig(rewardCfg); err != nil {
+				resetErrMu.Lock()
+				if resetErr == nil {
+					resetErr = fmt.Errorf("env %d reward config: %w", idx, err)
+				}
+				resetErrMu.Unlock()
+				return
+			}
+			obs, mask := s.vecEnvs[idx].ResetWithSeed(city, sf, s.vecSeeds[idx])
 			copy(allObs[idx*ObsDim:(idx+1)*ObsDim], obs)
 			copy(allMask[idx*MaskSize:(idx+1)*MaskSize], mask)
 		}(i)
 	}
 	wg.Wait()
+	if resetErr != nil {
+		return nil, status.Error(codes.Internal, resetErr.Error())
+	}
 
 	return &pb.VectorResetResponse{
 		Obs:  allObs,
@@ -368,7 +378,17 @@ func (s *GRPCService) RunVectorEpisode(stream pb.RLEnv_RunVectorEpisodeServer) e
 					termMu.Unlock()
 					// Native AutoReset
 					env.SetComplexity(s.complexityLevel())
-					obs, mask = env.Reset(env.gs.SelectedCity, s.spawnRateFactor())
+					if err := env.SetRewardConfig(s.rewardConfig()); err != nil {
+						panic(err)
+					}
+					if idx < len(s.vecEpisodes) {
+						s.vecEpisodes[idx]++
+					}
+					nextSeed := int64(0)
+					if idx < len(s.vecSeeds) && s.vecSeeds[idx] != 0 {
+						nextSeed = s.vecSeeds[idx] + s.vecEpisodes[idx]*1_000_003
+					}
+					obs, mask = env.ResetWithSeed(env.gs.SelectedCity, s.spawnRateFactor(), nextSeed)
 				}
 
 				copy(allObs[idx*ObsDim:(idx+1)*ObsDim], obs)
@@ -439,4 +459,36 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func rewardConfigFromProto(req *pb.RewardConfigRequest) RewardConfig {
+	return RewardConfig{
+		PerPassenger:        req.GetPerPassenger(),
+		QueueCoeff:          req.GetQueueCoeff(),
+		QueueDeltaCoeff:     req.GetQueueDeltaCoeff(),
+		OvercrowdCoeff:      req.GetOvercrowdCoeff(),
+		OvercrowdDeltaCoeff: req.GetOvercrowdDeltaCoeff(),
+		DangerThresh:        req.GetDangerThresh(),
+		DangerPenalty:       req.GetDangerPenalty(),
+		NoOpCriticalPenalty: req.GetNoopCriticalPenalty(),
+		WeekBonus:           req.GetWeekBonus(),
+		TerminalPenalty:     req.GetTerminalPenalty(),
+		InvalidAction:       req.GetInvalidAction(),
+	}
+}
+
+func rewardConfigToProto(cfg RewardConfig) *pb.RewardConfigRequest {
+	return &pb.RewardConfigRequest{
+		PerPassenger:        cfg.PerPassenger,
+		QueueCoeff:          cfg.QueueCoeff,
+		QueueDeltaCoeff:     cfg.QueueDeltaCoeff,
+		OvercrowdCoeff:      cfg.OvercrowdCoeff,
+		OvercrowdDeltaCoeff: cfg.OvercrowdDeltaCoeff,
+		DangerThresh:        cfg.DangerThresh,
+		DangerPenalty:       cfg.DangerPenalty,
+		NoopCriticalPenalty: cfg.NoOpCriticalPenalty,
+		WeekBonus:           cfg.WeekBonus,
+		TerminalPenalty:     cfg.TerminalPenalty,
+		InvalidAction:       cfg.InvalidAction,
+	}
 }

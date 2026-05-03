@@ -222,6 +222,7 @@ func (gs *GameState) DeepCopy() *GameState {
 		CameraZoom:           gs.CameraZoom,
 		SimTimeMs:            gs.SimTimeMs,
 		SpawnRateFactor:      gs.SpawnRateFactor,
+		Seed:                 gs.Seed,
 		GraphDirty:           true,      // force rebuild with new pointer set
 		Rivers:               gs.Rivers, // immutable — safe to share
 		Stations:             newStations,
@@ -229,5 +230,6 @@ func (gs *GameState) DeepCopy() *GameState {
 		Trains:               newTrains,
 		Passengers:           newPassengers,
 	}
+	cp.SetSeed(gs.Seed)
 	return cp
 }

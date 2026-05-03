@@ -157,8 +157,10 @@ type ResetRequest struct {
 	// Used by curriculum learning: the Python side increases this at episode
 	// reset when the agent has not yet mastered the current level.
 	SpawnRateFactor float32 `protobuf:"fixed32,2,opt,name=spawn_rate_factor,json=spawnRateFactor,proto3" json:"spawn_rate_factor,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Optional deterministic episode seed. Zero keeps the server default.
+	Seed          int64 `protobuf:"varint,3,opt,name=seed,proto3" json:"seed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResetRequest) Reset() {
@@ -201,6 +203,13 @@ func (x *ResetRequest) GetCity() string {
 func (x *ResetRequest) GetSpawnRateFactor() float32 {
 	if x != nil {
 		return x.SpawnRateFactor
+	}
+	return 0
+}
+
+func (x *ResetRequest) GetSeed() int64 {
+	if x != nil {
+		return x.Seed
 	}
 	return 0
 }
@@ -264,8 +273,10 @@ type VectorResetRequest struct {
 	NumEnvs         int32                  `protobuf:"varint,1,opt,name=num_envs,json=numEnvs,proto3" json:"num_envs,omitempty"`
 	City            string                 `protobuf:"bytes,2,opt,name=city,proto3" json:"city,omitempty"`
 	SpawnRateFactor float32                `protobuf:"fixed32,3,opt,name=spawn_rate_factor,json=spawnRateFactor,proto3" json:"spawn_rate_factor,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Optional deterministic base seed. Env i uses seed+i. Zero keeps defaults.
+	Seed          int64 `protobuf:"varint,4,opt,name=seed,proto3" json:"seed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VectorResetRequest) Reset() {
@@ -315,6 +326,13 @@ func (x *VectorResetRequest) GetCity() string {
 func (x *VectorResetRequest) GetSpawnRateFactor() float32 {
 	if x != nil {
 		return x.SpawnRateFactor
+	}
+	return 0
+}
+
+func (x *VectorResetRequest) GetSeed() int64 {
+	if x != nil {
+		return x.Seed
 	}
 	return 0
 }
@@ -373,6 +391,130 @@ func (x *VectorResetResponse) GetMask() []bool {
 	return nil
 }
 
+type RewardConfigRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	PerPassenger        float64                `protobuf:"fixed64,1,opt,name=per_passenger,json=perPassenger,proto3" json:"per_passenger,omitempty"`
+	QueueCoeff          float64                `protobuf:"fixed64,2,opt,name=queue_coeff,json=queueCoeff,proto3" json:"queue_coeff,omitempty"`
+	QueueDeltaCoeff     float64                `protobuf:"fixed64,3,opt,name=queue_delta_coeff,json=queueDeltaCoeff,proto3" json:"queue_delta_coeff,omitempty"`
+	OvercrowdCoeff      float64                `protobuf:"fixed64,4,opt,name=overcrowd_coeff,json=overcrowdCoeff,proto3" json:"overcrowd_coeff,omitempty"`
+	OvercrowdDeltaCoeff float64                `protobuf:"fixed64,5,opt,name=overcrowd_delta_coeff,json=overcrowdDeltaCoeff,proto3" json:"overcrowd_delta_coeff,omitempty"`
+	DangerThresh        float64                `protobuf:"fixed64,6,opt,name=danger_thresh,json=dangerThresh,proto3" json:"danger_thresh,omitempty"`
+	DangerPenalty       float64                `protobuf:"fixed64,7,opt,name=danger_penalty,json=dangerPenalty,proto3" json:"danger_penalty,omitempty"`
+	NoopCriticalPenalty float64                `protobuf:"fixed64,8,opt,name=noop_critical_penalty,json=noopCriticalPenalty,proto3" json:"noop_critical_penalty,omitempty"`
+	WeekBonus           float64                `protobuf:"fixed64,9,opt,name=week_bonus,json=weekBonus,proto3" json:"week_bonus,omitempty"`
+	TerminalPenalty     float64                `protobuf:"fixed64,10,opt,name=terminal_penalty,json=terminalPenalty,proto3" json:"terminal_penalty,omitempty"`
+	InvalidAction       float64                `protobuf:"fixed64,11,opt,name=invalid_action,json=invalidAction,proto3" json:"invalid_action,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *RewardConfigRequest) Reset() {
+	*x = RewardConfigRequest{}
+	mi := &file_rl_proto_minimetro_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RewardConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RewardConfigRequest) ProtoMessage() {}
+
+func (x *RewardConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rl_proto_minimetro_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RewardConfigRequest.ProtoReflect.Descriptor instead.
+func (*RewardConfigRequest) Descriptor() ([]byte, []int) {
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RewardConfigRequest) GetPerPassenger() float64 {
+	if x != nil {
+		return x.PerPassenger
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetQueueCoeff() float64 {
+	if x != nil {
+		return x.QueueCoeff
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetQueueDeltaCoeff() float64 {
+	if x != nil {
+		return x.QueueDeltaCoeff
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetOvercrowdCoeff() float64 {
+	if x != nil {
+		return x.OvercrowdCoeff
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetOvercrowdDeltaCoeff() float64 {
+	if x != nil {
+		return x.OvercrowdDeltaCoeff
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetDangerThresh() float64 {
+	if x != nil {
+		return x.DangerThresh
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetDangerPenalty() float64 {
+	if x != nil {
+		return x.DangerPenalty
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetNoopCriticalPenalty() float64 {
+	if x != nil {
+		return x.NoopCriticalPenalty
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetWeekBonus() float64 {
+	if x != nil {
+		return x.WeekBonus
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetTerminalPenalty() float64 {
+	if x != nil {
+		return x.TerminalPenalty
+	}
+	return 0
+}
+
+func (x *RewardConfigRequest) GetInvalidAction() float64 {
+	if x != nil {
+		return x.InvalidAction
+	}
+	return 0
+}
+
 type ActionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Four-element MultiDiscrete action: [act_cat, line_idx, station_idx, opt].
@@ -383,7 +525,7 @@ type ActionRequest struct {
 
 func (x *ActionRequest) Reset() {
 	*x = ActionRequest{}
-	mi := &file_rl_proto_minimetro_proto_msgTypes[6]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -395,7 +537,7 @@ func (x *ActionRequest) String() string {
 func (*ActionRequest) ProtoMessage() {}
 
 func (x *ActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rl_proto_minimetro_proto_msgTypes[6]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -408,7 +550,7 @@ func (x *ActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionRequest.ProtoReflect.Descriptor instead.
 func (*ActionRequest) Descriptor() ([]byte, []int) {
-	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{6}
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ActionRequest) GetAction() []int32 {
@@ -437,7 +579,7 @@ type StepResponse struct {
 
 func (x *StepResponse) Reset() {
 	*x = StepResponse{}
-	mi := &file_rl_proto_minimetro_proto_msgTypes[7]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -449,7 +591,7 @@ func (x *StepResponse) String() string {
 func (*StepResponse) ProtoMessage() {}
 
 func (x *StepResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rl_proto_minimetro_proto_msgTypes[7]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -462,7 +604,7 @@ func (x *StepResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepResponse.ProtoReflect.Descriptor instead.
 func (*StepResponse) Descriptor() ([]byte, []int) {
-	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{7}
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StepResponse) GetObs() []float32 {
@@ -545,7 +687,7 @@ type VectorActionRequest struct {
 
 func (x *VectorActionRequest) Reset() {
 	*x = VectorActionRequest{}
-	mi := &file_rl_proto_minimetro_proto_msgTypes[8]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -557,7 +699,7 @@ func (x *VectorActionRequest) String() string {
 func (*VectorActionRequest) ProtoMessage() {}
 
 func (x *VectorActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rl_proto_minimetro_proto_msgTypes[8]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +712,7 @@ func (x *VectorActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VectorActionRequest.ProtoReflect.Descriptor instead.
 func (*VectorActionRequest) Descriptor() ([]byte, []int) {
-	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{8}
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *VectorActionRequest) GetActions() []int32 {
@@ -604,7 +746,7 @@ type VectorStepResponse struct {
 
 func (x *VectorStepResponse) Reset() {
 	*x = VectorStepResponse{}
-	mi := &file_rl_proto_minimetro_proto_msgTypes[9]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +758,7 @@ func (x *VectorStepResponse) String() string {
 func (*VectorStepResponse) ProtoMessage() {}
 
 func (x *VectorStepResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rl_proto_minimetro_proto_msgTypes[9]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +771,7 @@ func (x *VectorStepResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VectorStepResponse.ProtoReflect.Descriptor instead.
 func (*VectorStepResponse) Descriptor() ([]byte, []int) {
-	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{9}
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *VectorStepResponse) GetObs() []float32 {
@@ -719,7 +861,7 @@ type ActRequest struct {
 
 func (x *ActRequest) Reset() {
 	*x = ActRequest{}
-	mi := &file_rl_proto_minimetro_proto_msgTypes[10]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -731,7 +873,7 @@ func (x *ActRequest) String() string {
 func (*ActRequest) ProtoMessage() {}
 
 func (x *ActRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rl_proto_minimetro_proto_msgTypes[10]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -744,7 +886,7 @@ func (x *ActRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActRequest.ProtoReflect.Descriptor instead.
 func (*ActRequest) Descriptor() ([]byte, []int) {
-	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{10}
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ActRequest) GetObs() []float32 {
@@ -770,7 +912,7 @@ type ActionResponse struct {
 
 func (x *ActionResponse) Reset() {
 	*x = ActionResponse{}
-	mi := &file_rl_proto_minimetro_proto_msgTypes[11]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -782,7 +924,7 @@ func (x *ActionResponse) String() string {
 func (*ActionResponse) ProtoMessage() {}
 
 func (x *ActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rl_proto_minimetro_proto_msgTypes[11]
+	mi := &file_rl_proto_minimetro_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -795,7 +937,7 @@ func (x *ActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionResponse.ProtoReflect.Descriptor instead.
 func (*ActionResponse) Descriptor() ([]byte, []int) {
-	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{11}
+	return file_rl_proto_minimetro_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ActionResponse) GetAction() []int32 {
@@ -821,20 +963,37 @@ const file_rl_proto_minimetro_proto_rawDesc = "" +
 	"stationDim\x12!\n" +
 	"\fnum_stations\x18\x05 \x01(\x05R\vnumStations\x12\x19\n" +
 	"\bline_dim\x18\x06 \x01(\x05R\alineDim\x12\x1b\n" +
-	"\tnum_lines\x18\a \x01(\x05R\bnumLines\"N\n" +
+	"\tnum_lines\x18\a \x01(\x05R\bnumLines\"b\n" +
 	"\fResetRequest\x12\x12\n" +
 	"\x04city\x18\x01 \x01(\tR\x04city\x12*\n" +
-	"\x11spawn_rate_factor\x18\x02 \x01(\x02R\x0fspawnRateFactor\"=\n" +
+	"\x11spawn_rate_factor\x18\x02 \x01(\x02R\x0fspawnRateFactor\x12\x12\n" +
+	"\x04seed\x18\x03 \x01(\x03R\x04seed\"=\n" +
 	"\rResetResponse\x12\x14\n" +
 	"\x03obs\x18\x01 \x03(\x02B\x02\x10\x01R\x03obs\x12\x16\n" +
-	"\x04mask\x18\x02 \x03(\bB\x02\x10\x01R\x04mask\"o\n" +
+	"\x04mask\x18\x02 \x03(\bB\x02\x10\x01R\x04mask\"\x83\x01\n" +
 	"\x12VectorResetRequest\x12\x19\n" +
 	"\bnum_envs\x18\x01 \x01(\x05R\anumEnvs\x12\x12\n" +
 	"\x04city\x18\x02 \x01(\tR\x04city\x12*\n" +
-	"\x11spawn_rate_factor\x18\x03 \x01(\x02R\x0fspawnRateFactor\"C\n" +
+	"\x11spawn_rate_factor\x18\x03 \x01(\x02R\x0fspawnRateFactor\x12\x12\n" +
+	"\x04seed\x18\x04 \x01(\x03R\x04seed\"C\n" +
 	"\x13VectorResetResponse\x12\x14\n" +
 	"\x03obs\x18\x01 \x03(\x02B\x02\x10\x01R\x03obs\x12\x16\n" +
-	"\x04mask\x18\x02 \x03(\bB\x02\x10\x01R\x04mask\"+\n" +
+	"\x04mask\x18\x02 \x03(\bB\x02\x10\x01R\x04mask\"\xd5\x03\n" +
+	"\x13RewardConfigRequest\x12#\n" +
+	"\rper_passenger\x18\x01 \x01(\x01R\fperPassenger\x12\x1f\n" +
+	"\vqueue_coeff\x18\x02 \x01(\x01R\n" +
+	"queueCoeff\x12*\n" +
+	"\x11queue_delta_coeff\x18\x03 \x01(\x01R\x0fqueueDeltaCoeff\x12'\n" +
+	"\x0fovercrowd_coeff\x18\x04 \x01(\x01R\x0eovercrowdCoeff\x122\n" +
+	"\x15overcrowd_delta_coeff\x18\x05 \x01(\x01R\x13overcrowdDeltaCoeff\x12#\n" +
+	"\rdanger_thresh\x18\x06 \x01(\x01R\fdangerThresh\x12%\n" +
+	"\x0edanger_penalty\x18\a \x01(\x01R\rdangerPenalty\x122\n" +
+	"\x15noop_critical_penalty\x18\b \x01(\x01R\x13noopCriticalPenalty\x12\x1d\n" +
+	"\n" +
+	"week_bonus\x18\t \x01(\x01R\tweekBonus\x12)\n" +
+	"\x10terminal_penalty\x18\n" +
+	" \x01(\x01R\x0fterminalPenalty\x12%\n" +
+	"\x0einvalid_action\x18\v \x01(\x01R\rinvalidAction\"+\n" +
 	"\rActionRequest\x12\x1a\n" +
 	"\x06action\x18\x01 \x03(\x05B\x02\x10\x01R\x06action\"\xa8\x02\n" +
 	"\fStepResponse\x12\x14\n" +
@@ -876,7 +1035,11 @@ const file_rl_proto_minimetro_proto_rawDesc = "" +
 	"\n" +
 	"RunEpisode\x12\x11.rl.ActionRequest\x1a\x10.rl.StepResponse\"\x00(\x010\x01\x12@\n" +
 	"\vResetVector\x12\x16.rl.VectorResetRequest\x1a\x17.rl.VectorResetResponse\"\x00\x12I\n" +
-	"\x10RunVectorEpisode\x12\x17.rl.VectorActionRequest\x1a\x16.rl.VectorStepResponse\"\x00(\x010\x0128\n" +
+	"\x10RunVectorEpisode\x12\x17.rl.VectorActionRequest\x1a\x16.rl.VectorStepResponse\"\x00(\x010\x012\xa2\x01\n" +
+	"\aControl\x12.\n" +
+	"\rSetDifficulty\x12\x10.rl.ResetRequest\x1a\t.rl.Empty\"\x00\x12.\n" +
+	"\rSetComplexity\x12\x10.rl.ResetRequest\x1a\t.rl.Empty\"\x00\x127\n" +
+	"\x0fSetRewardConfig\x12\x17.rl.RewardConfigRequest\x1a\t.rl.Empty\"\x0028\n" +
 	"\tInference\x12+\n" +
 	"\x03Act\x12\x0e.rl.ActRequest\x1a\x12.rl.ActionResponse\"\x00B\x17Z\x15minimetro-go/rl/protob\x06proto3"
 
@@ -892,7 +1055,7 @@ func file_rl_proto_minimetro_proto_rawDescGZIP() []byte {
 	return file_rl_proto_minimetro_proto_rawDescData
 }
 
-var file_rl_proto_minimetro_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_rl_proto_minimetro_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_rl_proto_minimetro_proto_goTypes = []any{
 	(*Empty)(nil),               // 0: rl.Empty
 	(*InfoResponse)(nil),        // 1: rl.InfoResponse
@@ -900,28 +1063,35 @@ var file_rl_proto_minimetro_proto_goTypes = []any{
 	(*ResetResponse)(nil),       // 3: rl.ResetResponse
 	(*VectorResetRequest)(nil),  // 4: rl.VectorResetRequest
 	(*VectorResetResponse)(nil), // 5: rl.VectorResetResponse
-	(*ActionRequest)(nil),       // 6: rl.ActionRequest
-	(*StepResponse)(nil),        // 7: rl.StepResponse
-	(*VectorActionRequest)(nil), // 8: rl.VectorActionRequest
-	(*VectorStepResponse)(nil),  // 9: rl.VectorStepResponse
-	(*ActRequest)(nil),          // 10: rl.ActRequest
-	(*ActionResponse)(nil),      // 11: rl.ActionResponse
+	(*RewardConfigRequest)(nil), // 6: rl.RewardConfigRequest
+	(*ActionRequest)(nil),       // 7: rl.ActionRequest
+	(*StepResponse)(nil),        // 8: rl.StepResponse
+	(*VectorActionRequest)(nil), // 9: rl.VectorActionRequest
+	(*VectorStepResponse)(nil),  // 10: rl.VectorStepResponse
+	(*ActRequest)(nil),          // 11: rl.ActRequest
+	(*ActionResponse)(nil),      // 12: rl.ActionResponse
 }
 var file_rl_proto_minimetro_proto_depIdxs = []int32{
 	0,  // 0: rl.RLEnv.Info:input_type -> rl.Empty
 	2,  // 1: rl.RLEnv.Reset:input_type -> rl.ResetRequest
-	6,  // 2: rl.RLEnv.RunEpisode:input_type -> rl.ActionRequest
+	7,  // 2: rl.RLEnv.RunEpisode:input_type -> rl.ActionRequest
 	4,  // 3: rl.RLEnv.ResetVector:input_type -> rl.VectorResetRequest
-	8,  // 4: rl.RLEnv.RunVectorEpisode:input_type -> rl.VectorActionRequest
-	10, // 5: rl.Inference.Act:input_type -> rl.ActRequest
-	1,  // 6: rl.RLEnv.Info:output_type -> rl.InfoResponse
-	3,  // 7: rl.RLEnv.Reset:output_type -> rl.ResetResponse
-	7,  // 8: rl.RLEnv.RunEpisode:output_type -> rl.StepResponse
-	5,  // 9: rl.RLEnv.ResetVector:output_type -> rl.VectorResetResponse
-	9,  // 10: rl.RLEnv.RunVectorEpisode:output_type -> rl.VectorStepResponse
-	11, // 11: rl.Inference.Act:output_type -> rl.ActionResponse
-	6,  // [6:12] is the sub-list for method output_type
-	0,  // [0:6] is the sub-list for method input_type
+	9,  // 4: rl.RLEnv.RunVectorEpisode:input_type -> rl.VectorActionRequest
+	2,  // 5: rl.Control.SetDifficulty:input_type -> rl.ResetRequest
+	2,  // 6: rl.Control.SetComplexity:input_type -> rl.ResetRequest
+	6,  // 7: rl.Control.SetRewardConfig:input_type -> rl.RewardConfigRequest
+	11, // 8: rl.Inference.Act:input_type -> rl.ActRequest
+	1,  // 9: rl.RLEnv.Info:output_type -> rl.InfoResponse
+	3,  // 10: rl.RLEnv.Reset:output_type -> rl.ResetResponse
+	8,  // 11: rl.RLEnv.RunEpisode:output_type -> rl.StepResponse
+	5,  // 12: rl.RLEnv.ResetVector:output_type -> rl.VectorResetResponse
+	10, // 13: rl.RLEnv.RunVectorEpisode:output_type -> rl.VectorStepResponse
+	0,  // 14: rl.Control.SetDifficulty:output_type -> rl.Empty
+	0,  // 15: rl.Control.SetComplexity:output_type -> rl.Empty
+	0,  // 16: rl.Control.SetRewardConfig:output_type -> rl.Empty
+	12, // 17: rl.Inference.Act:output_type -> rl.ActionResponse
+	9,  // [9:18] is the sub-list for method output_type
+	0,  // [0:9] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name
@@ -938,9 +1108,9 @@ func file_rl_proto_minimetro_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rl_proto_minimetro_proto_rawDesc), len(file_rl_proto_minimetro_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   3,
 		},
 		GoTypes:           file_rl_proto_minimetro_proto_goTypes,
 		DependencyIndexes: file_rl_proto_minimetro_proto_depIdxs,

@@ -30,6 +30,13 @@ service RLEnv {
   rpc RunVectorEpisode(stream VectorActionRequest) returns (stream VectorStepResponse) {}
 }
 
+// Control exposes training-time knobs used by curriculum and evolutionary runs.
+service Control {
+  rpc SetDifficulty(ResetRequest) returns (Empty) {}
+  rpc SetComplexity(ResetRequest) returns (Empty) {}
+  rpc SetRewardConfig(RewardConfigRequest) returns (Empty) {}
+}
+
 // Inference is implemented by the Python inference server (infer.py).
 // The Go live-game binary is the client (--rl-client flag).
 service Inference {
@@ -59,6 +66,8 @@ message ResetRequest {
   // Used by curriculum learning: the Python side increases this at episode
   // reset when the agent has not yet mastered the current level.
   float spawn_rate_factor = 2;
+  // Optional deterministic episode seed. Zero keeps the server default.
+  int64 seed = 3;
 }
 
 message ResetResponse {
@@ -74,6 +83,8 @@ message VectorResetRequest {
   int32 num_envs = 1;
   string city = 2;
   float spawn_rate_factor = 3;
+  // Optional deterministic base seed. Env i uses seed+i. Zero keeps defaults.
+  int64 seed = 4;
 }
 
 message VectorResetResponse {
@@ -83,6 +94,19 @@ message VectorResetResponse {
   repeated bool  mask = 2 [packed = true];
 }
 
+message RewardConfigRequest {
+  double per_passenger = 1;
+  double queue_coeff = 2;
+  double queue_delta_coeff = 3;
+  double overcrowd_coeff = 4;
+  double overcrowd_delta_coeff = 5;
+  double danger_thresh = 6;
+  double danger_penalty = 7;
+  double noop_critical_penalty = 8;
+  double week_bonus = 9;
+  double terminal_penalty = 10;
+  double invalid_action = 11;
+}
 
 // ── RunEpisode ────────────────────────────────────────────────────────────────
 

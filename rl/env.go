@@ -5,6 +5,7 @@
 package rl
 
 import (
+	"errors"
 	"math"
 
 	"minimetro-go/config"
@@ -21,9 +22,10 @@ const actionIntervalFrames = 18
 // It is not safe for concurrent use; each training worker should own its own
 // RLEnv (or communicate through the HTTP server, which serialises requests).
 type RLEnv struct {
-	gs   *state.GameState
-	game *systems.Game
-	cfg  ComplexityConfig
+	gs        *state.GameState
+	game      *systems.Game
+	cfg       ComplexityConfig
+	rewardCfg RewardConfig
 
 	// Reward tracking: compare current tick against previous values.
 	prevDelivered         int
@@ -65,7 +67,10 @@ func ComplexityForLevel(level int) ComplexityConfig {
 
 // NewRLEnv allocates an RLEnv. Call Reset before the first Step.
 func NewRLEnv() *RLEnv {
-	return &RLEnv{cfg: ComplexityForLevel(4)}
+	return &RLEnv{
+		cfg:       ComplexityForLevel(4),
+		rewardCfg: DefaultRewardConfig(),
+	}
 }
 
 // Reset initialises a new episode for the given city (e.g. "london").
@@ -73,7 +78,14 @@ func NewRLEnv() *RLEnv {
 // easier); pass 1.0 for normal difficulty.
 // Returns the initial observation and action mask.
 func (e *RLEnv) Reset(city string, spawnRateFactor float64) (obs []float32, mask []bool) {
+	return e.ResetWithSeed(city, spawnRateFactor, 0)
+}
+
+func (e *RLEnv) ResetWithSeed(city string, spawnRateFactor float64, seed int64) (obs []float32, mask []bool) {
 	e.gs = state.NewGameState()
+	if seed != 0 {
+		e.gs.SetSeed(seed)
+	}
 	e.gs.SelectedCity = city
 	e.game = systems.NewGame()
 	e.game.InitGame(e.gs, systems.SimScreenWidth, systems.SimScreenHeight)
@@ -108,6 +120,78 @@ func (e *RLEnv) applyComplexity() {
 		e.gs.Rivers = nil
 		e.gs.Bridges = 0
 	}
+}
+
+type RewardConfig struct {
+	PerPassenger        float64
+	QueueCoeff          float64
+	QueueDeltaCoeff     float64
+	OvercrowdCoeff      float64
+	OvercrowdDeltaCoeff float64
+	DangerThresh        float64
+	DangerPenalty       float64
+	NoOpCriticalPenalty float64
+	WeekBonus           float64
+	TerminalPenalty     float64
+	InvalidAction       float64
+}
+
+func DefaultRewardConfig() RewardConfig {
+	return RewardConfig{
+		PerPassenger:        3.0,
+		QueueCoeff:          0.03,
+		QueueDeltaCoeff:     0.20,
+		OvercrowdCoeff:      0.75,
+		OvercrowdDeltaCoeff: 2.00,
+		DangerThresh:        0.80,
+		DangerPenalty:       0.5,
+		NoOpCriticalPenalty: 0.25,
+		WeekBonus:           20.0,
+		TerminalPenalty:     100.0,
+		InvalidAction:       1.0,
+	}
+}
+
+func (e *RLEnv) SetRewardConfig(cfg RewardConfig) error {
+	if err := ValidateRewardConfig(cfg); err != nil {
+		return err
+	}
+	e.rewardCfg = cfg
+	return nil
+}
+
+func ValidateRewardConfig(cfg RewardConfig) error {
+	values := []struct {
+		name  string
+		value float64
+	}{
+		{"PerPassenger", cfg.PerPassenger},
+		{"QueueCoeff", cfg.QueueCoeff},
+		{"QueueDeltaCoeff", cfg.QueueDeltaCoeff},
+		{"OvercrowdCoeff", cfg.OvercrowdCoeff},
+		{"OvercrowdDeltaCoeff", cfg.OvercrowdDeltaCoeff},
+		{"DangerThresh", cfg.DangerThresh},
+		{"DangerPenalty", cfg.DangerPenalty},
+		{"NoOpCriticalPenalty", cfg.NoOpCriticalPenalty},
+		{"WeekBonus", cfg.WeekBonus},
+		{"TerminalPenalty", cfg.TerminalPenalty},
+		{"InvalidAction", cfg.InvalidAction},
+	}
+	for _, item := range values {
+		if math.IsNaN(item.value) || math.IsInf(item.value, 0) {
+			return errors.New("reward config contains NaN or Inf")
+		}
+		if item.value < 0 {
+			return errors.New("reward config contains negative coefficient")
+		}
+	}
+	if cfg.DangerThresh < 0.1 || cfg.DangerThresh > 1.5 {
+		return errors.New("reward config DangerThresh must be in [0.1, 1.5]")
+	}
+	if cfg.TerminalPenalty > 1000 {
+		return errors.New("reward config TerminalPenalty must be <= 1000")
+	}
+	return nil
 }
 
 // Step advances the environment by one decision interval.
@@ -171,8 +255,8 @@ func (e *RLEnv) Step(action []int) (obs []float32, reward float64, done bool, ma
 		e.lastReward.NoOp = noopPenalty
 	}
 	if !validAction {
-		reward -= rewardInvalidAction
-		e.lastReward.InvalidAction = rewardInvalidAction
+		reward -= e.rewardCfg.InvalidAction
+		e.lastReward.InvalidAction = e.rewardCfg.InvalidAction
 	}
 	e.lastReward.Total = reward
 	e.lastValid = validAction
@@ -208,26 +292,6 @@ func (e *RLEnv) runFrames() (gameOver bool) {
 	return false
 }
 
-// Reward shaping coefficients. All tunable values are centralised here so
-// experiments require no recompile of unrelated code — change a constant, run.
-//
-// The agent acts every ~300 ms, so common per-step penalties must stay in the
-// same rough O(1) range as passenger-delivery rewards. Larger values quickly
-// swamp the weekly-survival signal and destabilise PPO.
-const (
-	rewardPerPassenger        = 3.0   // dense delivery signal keeps throughput learning visible every step
-	rewardQueueCoeff          = 0.03  // pressure from passengers waiting at stations, normalised by station capacity
-	rewardQueueDeltaCoeff     = 0.20  // rewards reducing queue pressure and penalises queue growth
-	rewardOvercrowdCoeff      = 0.75  // nonlinear congestion risk from squared overcrowd progress
-	rewardOvercrowdDeltaCoeff = 2.00  // stronger signal for moving stations away from terminal overcrowding
-	rewardDangerThresh        = 0.80  // overcrowd fraction at which a station is "in danger"
-	rewardDangerPenalty       = 0.5   // soft warning near terminal overcrowding; terminal loss carries the main penalty
-	rewardNoOpCriticalPenalty = 0.25  // discourages repeated inaction when queues are already risky
-	rewardWeekBonus           = 20.0  // explicit survival milestone reward once per in-game week
-	rewardTerminalPenalty     = 100.0 // clear loss signal without overwhelming credit assignment
-	rewardInvalidAction       = 1.0   // small nudge; the action mask already removes most invalid exploration
-)
-
 // RewardBreakdown stores the components of the most recent transition reward.
 type RewardBreakdown struct {
 	Delivered      float64
@@ -245,14 +309,14 @@ type RewardBreakdown struct {
 
 // computeReward returns the shaped reward for the last transition.
 //
-//	+rewardPerPassenger       × passengers delivered since last step
-//	-rewardQueueCoeff         × Σ(waiting passengers / station capacity)
-//	-rewardQueueDeltaCoeff    × queue pressure growth, positive when it shrinks
-//	-rewardOvercrowdCoeff     × Σ(overcrowdProgress/OvercrowdTime)²
-//	-rewardOvercrowdDeltaCoeff × overcrowd risk growth, positive when it shrinks
-//	-rewardDangerPenalty      per station above rewardDangerThresh overcrowd
-//	+rewardWeekBonus          per new week completed
-//	-rewardTerminalPenalty    on game over
+//	+PerPassenger        × passengers delivered since last step
+//	-QueueCoeff          × Σ(waiting passengers / station capacity)
+//	-QueueDeltaCoeff     × queue pressure growth, positive when it shrinks
+//	-OvercrowdCoeff      × Σ(overcrowdProgress/OvercrowdTime)²
+//	-OvercrowdDeltaCoeff × overcrowd risk growth, positive when it shrinks
+//	-DangerPenalty       per station above DangerThresh overcrowd
+//	+WeekBonus           per new week completed
+//	-TerminalPenalty     on game over
 func (e *RLEnv) computeReward(done bool) float64 {
 	gs := e.gs
 
@@ -263,21 +327,21 @@ func (e *RLEnv) computeReward(done bool) float64 {
 
 	weekBonus := 0.0
 	if gs.Week > e.prevWeek {
-		weekBonus = rewardWeekBonus
+		weekBonus = e.rewardCfg.WeekBonus
 	}
 
 	terminal := 0.0
 	if done {
-		terminal = rewardTerminalPenalty
+		terminal = e.rewardCfg.TerminalPenalty
 	}
 
 	e.lastReward = RewardBreakdown{
-		Delivered:      delivered * rewardPerPassenger,
-		Queue:          queuePressure * rewardQueueCoeff,
-		QueueDelta:     queueDelta * rewardQueueDeltaCoeff,
-		Overcrowd:      overcrowdPressure * rewardOvercrowdCoeff,
-		OvercrowdDelta: overcrowdDelta * rewardOvercrowdDeltaCoeff,
-		Danger:         dangerCount * rewardDangerPenalty,
+		Delivered:      delivered * e.rewardCfg.PerPassenger,
+		Queue:          queuePressure * e.rewardCfg.QueueCoeff,
+		QueueDelta:     queueDelta * e.rewardCfg.QueueDeltaCoeff,
+		Overcrowd:      overcrowdPressure * e.rewardCfg.OvercrowdCoeff,
+		OvercrowdDelta: overcrowdDelta * e.rewardCfg.OvercrowdDeltaCoeff,
+		Danger:         dangerCount * e.rewardCfg.DangerPenalty,
 		Week:           weekBonus,
 		Terminal:       terminal,
 	}
@@ -308,7 +372,7 @@ func (e *RLEnv) rewardStatePressure() (queuePressure, overcrowdPressure, dangerC
 			continue
 		}
 		frac := math.Max(s.OvercrowdProgress/effectiveLimit, 0)
-		if frac > rewardDangerThresh {
+		if frac > e.rewardCfg.DangerThresh {
 			dangerCount++
 		}
 		frac = math.Min(frac, 1.5)
@@ -329,7 +393,7 @@ func (e *RLEnv) computeNoOpPenalty() float64 {
 	if scale > 3.0 {
 		scale = 3.0
 	}
-	return rewardNoOpCriticalPenalty * scale
+	return e.rewardCfg.NoOpCriticalPenalty * scale
 }
 
 // Info returns a map of diagnostic values for the current step. Included in

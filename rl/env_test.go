@@ -5,6 +5,8 @@ import (
 	"math"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"minimetro-go/components"
 	"minimetro-go/config"
 	pb "minimetro-go/rl/proto"
@@ -35,6 +37,40 @@ func TestResetAppliesComplexityConfig(t *testing.T) {
 	}
 	if env.gs.StationSpawnLimit != 6 {
 		t.Fatalf("station spawn limit: want 6, got %d", env.gs.StationSpawnLimit)
+	}
+}
+
+func TestResetWithSeedIsDeterministic(t *testing.T) {
+	a := NewRLEnv()
+	b := NewRLEnv()
+	a.ResetWithSeed("london", 1.0, 123)
+	b.ResetWithSeed("london", 1.0, 123)
+
+	if len(a.gs.Stations) != len(b.gs.Stations) {
+		t.Fatalf("station count mismatch: %d vs %d", len(a.gs.Stations), len(b.gs.Stations))
+	}
+	for i := range a.gs.Stations {
+		if a.gs.Stations[i].X != b.gs.Stations[i].X || a.gs.Stations[i].Y != b.gs.Stations[i].Y {
+			t.Fatalf("station %d position mismatch for same seed", i)
+		}
+	}
+}
+
+func TestResetWithDifferentSeedsChangesInitialLayout(t *testing.T) {
+	a := NewRLEnv()
+	b := NewRLEnv()
+	a.ResetWithSeed("london", 1.0, 123)
+	b.ResetWithSeed("london", 1.0, 456)
+
+	same := true
+	for i := range a.gs.Stations {
+		if a.gs.Stations[i].X != b.gs.Stations[i].X || a.gs.Stations[i].Y != b.gs.Stations[i].Y {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Fatal("different seeds should change initial station layout")
 	}
 }
 
@@ -91,9 +127,61 @@ func TestVectorResetUsesCurrentComplexityLevel(t *testing.T) {
 	}
 }
 
+func TestSetRewardConfigAppliesToExistingAndNewVectorEnvs(t *testing.T) {
+	svc := NewGRPCService()
+	if _, err := svc.ResetVector(context.Background(), &pb.VectorResetRequest{
+		NumEnvs:         1,
+		City:            "london",
+		SpawnRateFactor: 1.0,
+	}); err != nil {
+		t.Fatalf("ResetVector: %v", err)
+	}
+
+	cfg := DefaultRewardConfig()
+	cfg.PerPassenger = 9.0
+	cfg.WeekBonus = 33.0
+	if _, err := svc.SetRewardConfig(context.Background(), rewardConfigToProto(cfg)); err != nil {
+		t.Fatalf("SetRewardConfig: %v", err)
+	}
+	if svc.env.rewardCfg != cfg {
+		t.Fatal("single env reward config was not updated")
+	}
+	if svc.vecEnvs[0].rewardCfg != cfg {
+		t.Fatal("existing vector env reward config was not updated")
+	}
+
+	if _, err := svc.ResetVector(context.Background(), &pb.VectorResetRequest{
+		NumEnvs:         2,
+		City:            "london",
+		SpawnRateFactor: 1.0,
+	}); err != nil {
+		t.Fatalf("ResetVector with new env count: %v", err)
+	}
+	for i, env := range svc.vecEnvs {
+		if env.rewardCfg != cfg {
+			t.Fatalf("vector env %d reward config was not inherited", i)
+		}
+	}
+}
+
+func TestSetRewardConfigRejectsInvalidProto(t *testing.T) {
+	svc := NewGRPCService()
+	cfg := DefaultRewardConfig()
+	cfg.DangerThresh = 2.0
+
+	_, err := svc.SetRewardConfig(context.Background(), rewardConfigToProto(cfg))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("SetRewardConfig code: want InvalidArgument, got %v (err=%v)", status.Code(err), err)
+	}
+	if svc.rewardConfig() != DefaultRewardConfig() {
+		t.Fatal("invalid proto config should not replace current reward config")
+	}
+}
+
 func TestComputeRewardKeepsPerStepScaleBalanced(t *testing.T) {
 	env := NewRLEnv()
 	env.Reset("london", 1.0)
+	cfg := env.rewardCfg
 
 	env.prevDelivered = 0
 	env.prevWeek = 1
@@ -113,13 +201,13 @@ func TestComputeRewardKeepsPerStepScaleBalanced(t *testing.T) {
 
 	queuePressure := 3.0 / float64(config.Cities["london"].StationCapacity)
 	overcrowdPressure := 0.5*0.5 + 0.9*0.9
-	want := (2.0 * rewardPerPassenger) -
-		(queuePressure * rewardQueueCoeff) -
-		((queuePressure - 0.25) * rewardQueueDeltaCoeff) -
-		(overcrowdPressure * rewardOvercrowdCoeff) -
-		((overcrowdPressure - 0.25) * rewardOvercrowdDeltaCoeff) -
-		rewardDangerPenalty +
-		rewardWeekBonus
+	want := (2.0 * cfg.PerPassenger) -
+		(queuePressure * cfg.QueueCoeff) -
+		((queuePressure - 0.25) * cfg.QueueDeltaCoeff) -
+		(overcrowdPressure * cfg.OvercrowdCoeff) -
+		((overcrowdPressure - 0.25) * cfg.OvercrowdDeltaCoeff) -
+		cfg.DangerPenalty +
+		cfg.WeekBonus
 	if math.Abs(reward-want) > 1e-9 {
 		t.Fatalf("reward: want %.3f, got %.3f", want, reward)
 	}
@@ -129,14 +217,68 @@ func TestComputeRewardKeepsPerStepScaleBalanced(t *testing.T) {
 	if env.lastReward.OvercrowdDelta <= 0 {
 		t.Fatal("overcrowd delta penalty should be positive when risk increases")
 	}
-	if env.lastReward.Danger != rewardDangerPenalty {
-		t.Fatalf("danger penalty: want %.3f, got %.3f", rewardDangerPenalty, env.lastReward.Danger)
+	if env.lastReward.Danger != cfg.DangerPenalty {
+		t.Fatalf("danger penalty: want %.3f, got %.3f", cfg.DangerPenalty, env.lastReward.Danger)
+	}
+}
+
+func TestSetRewardConfigChangesRewardCoefficients(t *testing.T) {
+	env := NewRLEnv()
+	cfg := DefaultRewardConfig()
+	cfg.PerPassenger = 7.0
+	cfg.WeekBonus = 11.0
+	cfg.QueueCoeff = 0
+	cfg.QueueDeltaCoeff = 0
+	cfg.OvercrowdCoeff = 0
+	cfg.OvercrowdDeltaCoeff = 0
+	cfg.DangerPenalty = 0
+	if err := env.SetRewardConfig(cfg); err != nil {
+		t.Fatalf("SetRewardConfig: %v", err)
+	}
+	env.Reset("london", 1.0)
+
+	env.prevDelivered = 0
+	env.prevWeek = 1
+	env.gs.PassengersDelivered = 2
+	env.gs.Week = 2
+
+	reward := env.computeReward(false)
+	want := 2.0*cfg.PerPassenger + cfg.WeekBonus
+	if reward != want {
+		t.Fatalf("reward: want %.3f, got %.3f", want, reward)
+	}
+}
+
+func TestSetRewardConfigRejectsInvalidValues(t *testing.T) {
+	env := NewRLEnv()
+	original := env.rewardCfg
+
+	cfg := DefaultRewardConfig()
+	cfg.QueueCoeff = -1
+	if err := env.SetRewardConfig(cfg); err == nil {
+		t.Fatal("expected negative coefficient to be rejected")
+	}
+	if env.rewardCfg != original {
+		t.Fatal("invalid config should not replace current reward config")
+	}
+
+	cfg = DefaultRewardConfig()
+	cfg.DangerThresh = 2.0
+	if err := env.SetRewardConfig(cfg); err == nil {
+		t.Fatal("expected out-of-range danger threshold to be rejected")
+	}
+
+	cfg = DefaultRewardConfig()
+	cfg.TerminalPenalty = math.Inf(1)
+	if err := env.SetRewardConfig(cfg); err == nil {
+		t.Fatal("expected infinite coefficient to be rejected")
 	}
 }
 
 func TestComputeNoOpPenaltyOnlyInCriticalRepeatedNoOp(t *testing.T) {
 	env := NewRLEnv()
 	env.Reset("london", 1.0)
+	cfg := env.rewardCfg
 
 	env.consecutiveNoOp = 1
 	if got := env.computeNoOpPenalty(); got != 0 {
@@ -150,13 +292,13 @@ func TestComputeNoOpPenaltyOnlyInCriticalRepeatedNoOp(t *testing.T) {
 
 	env.gs.Stations[0].OvercrowdProgress = 0.9 * float64(config.OvercrowdTime)
 	got := env.computeNoOpPenalty()
-	if got != rewardNoOpCriticalPenalty {
-		t.Fatalf("critical repeated noop penalty: want %.3f, got %.3f", rewardNoOpCriticalPenalty, got)
+	if got != cfg.NoOpCriticalPenalty {
+		t.Fatalf("critical repeated noop penalty: want %.3f, got %.3f", cfg.NoOpCriticalPenalty, got)
 	}
 
 	env.consecutiveNoOp = 20
 	got = env.computeNoOpPenalty()
-	maxPenalty := rewardNoOpCriticalPenalty * 3.0
+	maxPenalty := cfg.NoOpCriticalPenalty * 3.0
 	if got != maxPenalty {
 		t.Fatalf("noop penalty should cap at %.3f, got %.3f", maxPenalty, got)
 	}

@@ -294,6 +294,188 @@ var RLEnv_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	Control_SetDifficulty_FullMethodName   = "/rl.Control/SetDifficulty"
+	Control_SetComplexity_FullMethodName   = "/rl.Control/SetComplexity"
+	Control_SetRewardConfig_FullMethodName = "/rl.Control/SetRewardConfig"
+)
+
+// ControlClient is the client API for Control service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Control exposes training-time knobs used by curriculum and evolutionary runs.
+type ControlClient interface {
+	SetDifficulty(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*Empty, error)
+	SetComplexity(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*Empty, error)
+	SetRewardConfig(ctx context.Context, in *RewardConfigRequest, opts ...grpc.CallOption) (*Empty, error)
+}
+
+type controlClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewControlClient(cc grpc.ClientConnInterface) ControlClient {
+	return &controlClient{cc}
+}
+
+func (c *controlClient) SetDifficulty(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Control_SetDifficulty_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlClient) SetComplexity(ctx context.Context, in *ResetRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Control_SetComplexity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlClient) SetRewardConfig(ctx context.Context, in *RewardConfigRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Control_SetRewardConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ControlServer is the server API for Control service.
+// All implementations must embed UnimplementedControlServer
+// for forward compatibility.
+//
+// Control exposes training-time knobs used by curriculum and evolutionary runs.
+type ControlServer interface {
+	SetDifficulty(context.Context, *ResetRequest) (*Empty, error)
+	SetComplexity(context.Context, *ResetRequest) (*Empty, error)
+	SetRewardConfig(context.Context, *RewardConfigRequest) (*Empty, error)
+	mustEmbedUnimplementedControlServer()
+}
+
+// UnimplementedControlServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedControlServer struct{}
+
+func (UnimplementedControlServer) SetDifficulty(context.Context, *ResetRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetDifficulty not implemented")
+}
+func (UnimplementedControlServer) SetComplexity(context.Context, *ResetRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetComplexity not implemented")
+}
+func (UnimplementedControlServer) SetRewardConfig(context.Context, *RewardConfigRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetRewardConfig not implemented")
+}
+func (UnimplementedControlServer) mustEmbedUnimplementedControlServer() {}
+func (UnimplementedControlServer) testEmbeddedByValue()                 {}
+
+// UnsafeControlServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ControlServer will
+// result in compilation errors.
+type UnsafeControlServer interface {
+	mustEmbedUnimplementedControlServer()
+}
+
+func RegisterControlServer(s grpc.ServiceRegistrar, srv ControlServer) {
+	// If the following call panics, it indicates UnimplementedControlServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&Control_ServiceDesc, srv)
+}
+
+func _Control_SetDifficulty_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServer).SetDifficulty(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Control_SetDifficulty_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServer).SetDifficulty(ctx, req.(*ResetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Control_SetComplexity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServer).SetComplexity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Control_SetComplexity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServer).SetComplexity(ctx, req.(*ResetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Control_SetRewardConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RewardConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServer).SetRewardConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Control_SetRewardConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServer).SetRewardConfig(ctx, req.(*RewardConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Control_ServiceDesc is the grpc.ServiceDesc for Control service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Control_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "rl.Control",
+	HandlerType: (*ControlServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SetDifficulty",
+			Handler:    _Control_SetDifficulty_Handler,
+		},
+		{
+			MethodName: "SetComplexity",
+			Handler:    _Control_SetComplexity_Handler,
+		},
+		{
+			MethodName: "SetRewardConfig",
+			Handler:    _Control_SetRewardConfig_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "rl/proto/minimetro.proto",
+}
+
+const (
 	Inference_Act_FullMethodName = "/rl.Inference/Act"
 )
 

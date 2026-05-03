@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import sys
@@ -109,6 +110,16 @@ class LinearLRSchedule:
 
 
 lr_schedule = LinearLRSchedule()
+
+
+def load_reward_config(path: str) -> dict[str, float] | None:
+    if not path:
+        return None
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = json.load(fh)
+    if not isinstance(raw, dict):
+        raise ValueError("--reward-config must point to a JSON object")
+    return {str(k): float(v) for k, v in raw.items()}
 
 
 class ConditionalMaskRolloutBuffer(MaskableRolloutBuffer):
@@ -478,16 +489,21 @@ class TracedMaskableEvalCallback(MaskableEvalCallback):
 def train(args: argparse.Namespace):
     if args.frame_stack < 1:
         raise ValueError("--frame-stack must be >= 1")
+    reward_config = load_reward_config(args.reward_config)
+    checkpoint_dir = args.checkpoint_dir
+    log_dir = args.log_dir
+    base_port = args.base_port
 
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-    os.makedirs(LOG_DIR, exist_ok=True)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
 
     n = args.n_envs
-    print(f"Launching {n} training envs on port {BASE_PORT}")
+    print(f"Launching {n} training envs on port {base_port}")
 
     trace(
         "startup "
         f"n_envs={n} city={args.city} "
+        f"base_port={base_port} "
         f"torch_threads={torch.get_num_threads()} "
         f"trace_interval={args.trace_interval}s "
         f"frame_stack={args.frame_stack} "
@@ -498,10 +514,13 @@ def train(args: argparse.Namespace):
     vec_env = MiniMetroVecEnv(
         n_envs=n,
         city=args.city,
-        port=BASE_PORT,
+        port=base_port,
         managed=True,
         trace_interval=args.trace_interval,
     )
+    if reward_config is not None:
+        trace(f"applying_reward_config path={args.reward_config}")
+        vec_env.set_reward_config(reward_config)
     vec_env = VecMonitor(vec_env)
     if args.frame_stack > 1:
         vec_env = MiniMetroFrameStack(vec_env, n_stack=args.frame_stack)
@@ -512,10 +531,12 @@ def train(args: argparse.Namespace):
     eval_env = MiniMetroVecEnv(
         n_envs=2,
         city=args.city,
-        port=BASE_PORT + 1,
+        port=base_port + 1,
         managed=True,
         trace_interval=args.trace_interval,
     )
+    if reward_config is not None:
+        eval_env.set_reward_config(reward_config)
     eval_env = VecMonitor(eval_env)
     if args.frame_stack > 1:
         eval_env = MiniMetroFrameStack(eval_env, n_stack=args.frame_stack)
@@ -523,7 +544,7 @@ def train(args: argparse.Namespace):
     if args.resume:
         print(f"Resuming from {args.resume}")
         model = TracedMaskablePPO.load(
-            args.resume, env=vec_env, tensorboard_log=LOG_DIR,
+            args.resume, env=vec_env, tensorboard_log=log_dir,
             learning_rate=lr_schedule,
             rollout_buffer_class=ConditionalMaskRolloutBuffer,
             verbose=1,
@@ -543,7 +564,7 @@ def train(args: argparse.Namespace):
             max_grad_norm=PPO_MAX_GRAD_NORM,
             target_kl=PPO_TARGET_KL,
             rollout_buffer_class=ConditionalMaskRolloutBuffer,
-            tensorboard_log=LOG_DIR,
+            tensorboard_log=log_dir,
             policy_kwargs={
                 "features_extractor_class": MetroFeatureExtractor,
                 "net_arch": [256, 256],
@@ -561,15 +582,15 @@ def train(args: argparse.Namespace):
         RolloutDiagnosticsCallback(),
         TracedCheckpointCallback(
             save_freq=max(CHECKPOINT_FREQ // n, 1),
-            save_path=CHECKPOINT_DIR,
+            save_path=checkpoint_dir,
             name_prefix="minimetro_ppo",
         ),
         TracedMaskableEvalCallback(
             eval_env,
             n_eval_episodes=EVAL_EPISODES,
             eval_freq=max(EVAL_FREQ // n, 1),
-            best_model_save_path=CHECKPOINT_DIR,
-            log_path=LOG_DIR,
+            best_model_save_path=checkpoint_dir,
+            log_path=log_dir,
             deterministic=True,
         ),
         DifficultySweepEvalCallback(
@@ -595,20 +616,25 @@ def train(args: argparse.Namespace):
 
     signal.signal(signal.SIGINT, _handle_sigint)
 
-    CHUNK = 500_000  # timesteps per learn() call — sets the progress bar horizon
+    CHUNK = args.learn_chunk
 
     print("[train] All envs ready, starting learning loop...")
     first_chunk = True
     try:
         while not interrupted:
+            if args.total_timesteps > 0 and model.num_timesteps >= args.total_timesteps:
+                break
+            chunk = CHUNK
+            if args.total_timesteps > 0:
+                chunk = min(chunk, args.total_timesteps - model.num_timesteps)
             learn_start = time.perf_counter()
             trace(
                 "learn_chunk_start "
                 f"current_timesteps={model.num_timesteps:,} "
-                f"target_chunk={CHUNK:,}"
+                f"target_chunk={chunk:,}"
             )
             model.learn(
-                total_timesteps=CHUNK,
+                total_timesteps=chunk,
                 callback=callbacks,
                 reset_num_timesteps=first_chunk and not args.resume,
                 progress_bar=True,
@@ -622,7 +648,7 @@ def train(args: argparse.Namespace):
     except KeyboardInterrupt:
         pass
     finally:
-        final_path = os.path.join(CHECKPOINT_DIR, "minimetro_latest")
+        final_path = os.path.join(checkpoint_dir, "minimetro_latest")
         model.save(final_path)
         print(f"\n[train] Saved to {final_path}.zip  (timesteps: {model.num_timesteps:,})")
         vec_env.close()
@@ -639,4 +665,13 @@ if __name__ == "__main__":
                         help="Seconds between debug trace prints during training")
     parser.add_argument("--frame-stack", type=int, default=FRAME_STACK,
                         help="Number of recent observations to stack for temporal context")
+    parser.add_argument("--reward-config", type=str, default="",
+                        help="Path to a JSON RewardConfig applied before training resets")
+    parser.add_argument("--total-timesteps", type=int, default=0,
+                        help="Stop after this many timesteps; 0 keeps training indefinitely")
+    parser.add_argument("--learn-chunk", type=int, default=500_000,
+                        help="Timesteps per learn() call")
+    parser.add_argument("--checkpoint-dir", type=str, default=CHECKPOINT_DIR)
+    parser.add_argument("--log-dir", type=str, default=LOG_DIR)
+    parser.add_argument("--base-port", type=int, default=BASE_PORT)
     train(parser.parse_args())

@@ -35,7 +35,7 @@ func main() {
 	srv := grpc.NewServer()
 	rlSvc := rl.NewGRPCService()
 	pb.RegisterRLEnvServer(srv, rlSvc)
-	rl.RegisterControlService(srv, rlSvc)
+	pb.RegisterControlServer(srv, rlSvc)
 
 	log.Printf("[rl_server] gRPC listening on %s", addr)
 	log.Fatal(srv.Serve(lis))

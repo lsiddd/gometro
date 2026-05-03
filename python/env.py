@@ -6,7 +6,7 @@ import signal
 import subprocess
 import threading
 import time
-from typing import Any
+from typing import Any, Mapping
 
 import grpc
 import numpy as np
@@ -42,6 +42,20 @@ _STATION_OFFSET = GLOBAL_DIM
 _PAX_RATIO_IDX = 3
 _OVERCROWD_IDX = 4
 
+_REWARD_CONFIG_FIELDS = (
+    "per_passenger",
+    "queue_coeff",
+    "queue_delta_coeff",
+    "overcrowd_coeff",
+    "overcrowd_delta_coeff",
+    "danger_thresh",
+    "danger_penalty",
+    "noop_critical_penalty",
+    "week_bonus",
+    "terminal_penalty",
+    "invalid_action",
+)
+
 
 def _actions_valid_for_masks(actions: np.ndarray, masks: np.ndarray) -> np.ndarray:
     """Validate [act, line, station, option] against conditional masks."""
@@ -70,6 +84,19 @@ def _actions_valid_for_masks(actions: np.ndarray, masks: np.ndarray) -> np.ndarr
             valid[i] = False
     return valid
 
+
+def reward_config_request(config: Mapping[str, Any]) -> pb.RewardConfigRequest:
+    """Build a typed protobuf request from a reward-config mapping."""
+    missing = [field for field in _REWARD_CONFIG_FIELDS if field not in config]
+    if missing:
+        raise ValueError(f"reward config missing fields: {', '.join(missing)}")
+    unknown = sorted(set(config) - set(_REWARD_CONFIG_FIELDS))
+    if unknown:
+        raise ValueError(f"reward config has unknown fields: {', '.join(unknown)}")
+    return pb.RewardConfigRequest(
+        **{field: float(config[field]) for field in _REWARD_CONFIG_FIELDS}
+    )
+
 class MiniMetroVecEnv(VecEnv):
     def __init__(
         self,
@@ -79,6 +106,7 @@ class MiniMetroVecEnv(VecEnv):
         binary: str = _DEFAULT_BINARY,
         managed: bool = True,
         trace_interval: float = 10.0,
+        seed: int = 0,
     ):
         observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(OBS_DIM,), dtype=np.float32
@@ -91,15 +119,18 @@ class MiniMetroVecEnv(VecEnv):
         self.binary = binary
         self.managed = managed
         self.trace_interval = trace_interval
+        self.seed = int(seed)
         self._proc: subprocess.Popen | None = None
         self._log_file = None
 
         self._mask = np.ones((n_envs, _MASK_SIZE), dtype=bool)
         self.difficulty = 1.0
         self.complexity = 4
+        self.reward_config: dict[str, float] | None = None
 
         self._channel: grpc.Channel | None = None
         self._stub: pb_grpc.RLEnvStub | None = None
+        self._control_stub: pb_grpc.ControlStub | None = None
 
         self._stream = None
         self._action_queue: queue.Queue = queue.Queue()
@@ -130,6 +161,9 @@ class MiniMetroVecEnv(VecEnv):
             self._trace(f"set_complexity level={self.complexity}")
             self._set_server_complexity(self.complexity)
             return [None] * self.num_envs
+        if method_name == "set_reward_config":
+            self.set_reward_config(args[0])
+            return [None] * self.num_envs
         if method_name == "action_masks":
             return list(self._mask)
         raise NotImplementedError(method_name)
@@ -142,6 +176,8 @@ class MiniMetroVecEnv(VecEnv):
             return [self.difficulty] * self.num_envs
         if attr_name == "complexity":
             return [self.complexity] * self.num_envs
+        if attr_name == "reward_config":
+            return [self.reward_config] * self.num_envs
         return [None] * self.num_envs
 
     def set_attr(self, attr_name: str, value: Any, indices=None) -> None:
@@ -151,9 +187,18 @@ class MiniMetroVecEnv(VecEnv):
         if attr_name == "complexity":
             self.complexity = int(value)
             self._set_server_complexity(self.complexity)
+        if attr_name == "reward_config":
+            self.set_reward_config(value)
 
     def action_masks(self) -> list[np.ndarray]:
         return list(self._mask)
+
+    def set_reward_config(self, config: Mapping[str, Any]) -> None:
+        request = reward_config_request(config)
+        self.reward_config = {
+            field: float(getattr(request, field)) for field in _REWARD_CONFIG_FIELDS
+        }
+        self._set_server_reward_config(request)
 
     def reset(self) -> np.ndarray:
         t0 = time.perf_counter()
@@ -164,6 +209,7 @@ class MiniMetroVecEnv(VecEnv):
                 num_envs=self.num_envs,
                 city=self.city,
                 spawn_rate_factor=self.difficulty,
+                seed=self.seed,
             )
         )
         obs = np.array(resp.obs, dtype=np.float32).reshape(self.num_envs, OBS_DIM)
@@ -323,16 +369,7 @@ class MiniMetroVecEnv(VecEnv):
             ('grpc.max_receive_message_length', 50 * 1024 * 1024)
         ])
         self._stub = pb_grpc.RLEnvStub(self._channel)
-        self._control_set_difficulty = self._channel.unary_unary(
-            "/rl.Control/SetDifficulty",
-            request_serializer=pb.ResetRequest.SerializeToString,
-            response_deserializer=pb.Empty.FromString,
-        )
-        self._control_set_complexity = self._channel.unary_unary(
-            "/rl.Control/SetComplexity",
-            request_serializer=pb.ResetRequest.SerializeToString,
-            response_deserializer=pb.Empty.FromString,
-        )
+        self._control_stub = pb_grpc.ControlStub(self._channel)
 
         info_resp = self._stub.Info(pb.Empty())
         validate_server_constants({
@@ -350,7 +387,7 @@ class MiniMetroVecEnv(VecEnv):
         if self._channel is None:
             return
         t0 = time.perf_counter()
-        self._control_set_difficulty(
+        self._control_stub.SetDifficulty(
             pb.ResetRequest(spawn_rate_factor=float(difficulty)),
             timeout=5,
         )
@@ -360,11 +397,18 @@ class MiniMetroVecEnv(VecEnv):
         if self._channel is None:
             return
         t0 = time.perf_counter()
-        self._control_set_complexity(
+        self._control_stub.SetComplexity(
             pb.ResetRequest(spawn_rate_factor=float(level)),
             timeout=5,
         )
         self._trace(f"set_server_complexity elapsed={time.perf_counter() - t0:.3f}s")
+
+    def _set_server_reward_config(self, request: pb.RewardConfigRequest) -> None:
+        if self._channel is None:
+            return
+        t0 = time.perf_counter()
+        self._control_stub.SetRewardConfig(request, timeout=5)
+        self._trace(f"set_server_reward_config elapsed={time.perf_counter() - t0:.3f}s")
 
     def _start_server(self):
         binary = os.path.abspath(self.binary)
@@ -437,6 +481,7 @@ class MiniMetroEnv(gym.Env):
         binary: str = _DEFAULT_BINARY,
         managed: bool = True,
         trace_interval: float = 10.0,
+        seed: int = 0,
     ):
         super().__init__()
         self._vec = MiniMetroVecEnv(
@@ -446,6 +491,7 @@ class MiniMetroEnv(gym.Env):
             binary=binary,
             managed=managed,
             trace_interval=trace_interval,
+            seed=seed,
         )
         self.observation_space = self._vec.observation_space
         self.action_space = self._vec.action_space
@@ -453,6 +499,8 @@ class MiniMetroEnv(gym.Env):
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
+        if seed is not None:
+            self._vec.seed = int(seed)
         obs = self._vec.reset()
         return obs[0], {}
 
