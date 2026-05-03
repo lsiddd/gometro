@@ -33,6 +33,10 @@ Thumbs.db
 *zip
 *npz
 tb_logs
+python/tb_logs/
+python/checkpoints/
+python/evolution_runs/
+python/*.log
 *pyc
 __pycache__/
 *.onnx

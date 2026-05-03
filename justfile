@@ -8,6 +8,9 @@ n_envs     := "12"
 city       := "london"
 checkpoint := ""
 
+evo_run_dir := "evolution_runs/reward_search_001"
+evo_smoke_dir := "evolution_runs/reward_search_smoke"
+
 # compile all Go binaries
 build:
 	go build -o minimetro .
@@ -43,6 +46,91 @@ train: build _kill-servers
 		--n-envs {{n_envs}} \
 		--city {{city}} || true
 	just _stop-tb
+
+# quick local validation for the evolutionary reward search pipeline
+evolve-smoke run_dir=evo_smoke_dir: build _kill-servers
+	cd {{python_dir}} && uv run python evolve_rewards.py \
+		--run-dir {{run_dir}} \
+		--population 3 \
+		--generations 1 \
+		--elites 1 \
+		--random-individuals 1 \
+		--train-timesteps 10000 \
+		--learn-chunk 10000 \
+		--eval-episodes 2 \
+		--eval-max-steps 500 \
+		--eval-seeds 101 \
+		--n-envs 2 \
+		--skip-baseline \
+		--retrain-top 0
+
+# run the default robust evolutionary search; override args as needed:
+# just evolve evolution_runs/my_search 12 10 500000 32
+evolve run_dir=evo_run_dir population="12" generations="10" train_steps="500000" eval_episodes="32": build _kill-servers
+	cd {{python_dir}} && uv run python evolve_rewards.py \
+		--run-dir {{run_dir}} \
+		--population {{population}} \
+		--generations {{generations}} \
+		--elites 3 \
+		--random-individuals 2 \
+		--sigma 0.25 \
+		--train-timesteps {{train_steps}} \
+		--learn-chunk {{train_steps}} \
+		--n-envs 8 \
+		--eval-episodes {{eval_episodes}} \
+		--eval-max-steps 4000 \
+		--eval-cities london \
+		--eval-complexities 4 \
+		--eval-spawn-factors 1.0 \
+		--eval-seeds 101,202,303,404 \
+		--retrain-top 3 \
+		--retrain-timesteps 20000000 \
+		--retrain-eval-episodes 64 \
+		--retrain-eval-cities london,paris,newyork \
+		--retrain-eval-spawn-factors 1.25,1.0 \
+		--retrain-eval-seeds 1001,1002,1003,1004
+
+# resume an interrupted evolutionary run without redoing finished evals
+evolve-resume run_dir=evo_run_dir: build _kill-servers
+	cd {{python_dir}} && uv run python evolve_rewards.py \
+		--run-dir {{run_dir}} \
+		--resume-run
+
+# print the current leaderboard for an evolutionary run
+evolve-summary run_dir=evo_run_dir:
+	cd {{python_dir}} && uv run python -c 'import json; from pathlib import Path; run=Path("{{run_dir}}"); paths=[run/"leaderboard.json", run/"final_summary.json"]; path=next((p for p in paths if p.exists()), None); assert path is not None, f"no summary found under {run}"; data=json.loads(path.read_text()); print(path); print(json.dumps(data[:10] if path.name=="leaderboard.json" else data.get("best"), indent=2))'
+
+# show the local dashboard path for an evolutionary run
+evolve-dashboard run_dir=evo_run_dir:
+	@echo "{{python_dir}}/{{run_dir}}/dashboard.html"
+
+# remove Python bytecode/cache directories
+clean-pycache:
+	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .mypy_cache -o -name .ruff_cache \) -prune -exec rm -rf {} +
+	find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+
+# remove generated run artifacts, checkpoints, logs, TensorBoard data, and built binaries
+# Pass yes explicitly: just clean-artifacts yes
+clean-artifacts confirm="no":
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [ "{{confirm}}" != "yes" ]; then
+		echo "This removes checkpoints, tb_logs, evolution_runs, logs, and built binaries."
+		echo "Run: just clean-artifacts yes"
+		exit 1
+	fi
+	rm -rf \
+		minimetro \
+		{{binary}} \
+		{{python_dir}}/checkpoints \
+		{{python_dir}}/tb_logs \
+		{{python_dir}}/evolution_runs \
+		{{python_dir}}/*.log \
+		/tmp/rl_server_vector_*.log
+
+# remove Python caches and generated run artifacts
+clean-all-artifacts confirm="no": clean-pycache
+	just clean-artifacts {{confirm}}
 
 # build, start TensorBoard, then resume from latest checkpoint
 # usage: just resume   OR   just resume checkpoints/pretrain_bc
